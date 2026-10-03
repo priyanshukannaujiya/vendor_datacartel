@@ -11,7 +11,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, status, HTTPException, UploadFile, File, Body
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, desc
 
 from app.core.database import get_db
@@ -75,7 +75,13 @@ def _get_batch_by_id(db: Session, batch_id: Union[UUID, str]) -> Optional[Batch]
         return db.query(Batch).filter(Batch.batch_number == str(batch_id)).first()
 
 
-def _enrich_batch_response(batch: Batch, db: Session) -> BatchResponse:
+def _enrich_batch_response(
+    batch: Batch,
+    db: Session,
+    intel: Optional[BatchIntelligence] = None,
+    latest_email: Optional[EmailEvent] = None,
+    preloaded: bool = False,
+) -> BatchResponse:
     """Enrich basic batch response with joined vendor, material, and pipeline info."""
     resp = BatchResponse.model_validate(batch)
     if batch.vendor:
@@ -87,7 +93,8 @@ def _enrich_batch_response(batch: Batch, db: Session) -> BatchResponse:
         resp.material_required_purity = batch.raw_material.purity_min
 
     # Check intelligence and decisions
-    intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
+    if not preloaded:
+        intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
     if intel and intel.ml_prediction:
         resp.risk_score = intel.ml_prediction.get("risk_score")
         resp.risk_level = intel.ml_prediction.get("risk_level")
@@ -96,12 +103,13 @@ def _enrich_batch_response(batch: Batch, db: Session) -> BatchResponse:
         resp.processed = True
 
     # Check email status
-    latest_email = (
-        db.query(EmailEvent)
-        .filter(EmailEvent.batch_id == batch.id)
-        .order_by(desc(EmailEvent.created_at))
-        .first()
-    )
+    if not preloaded:
+        latest_email = (
+            db.query(EmailEvent)
+            .filter(EmailEvent.batch_id == batch.id)
+            .order_by(desc(EmailEvent.created_at))
+            .first()
+        )
     if latest_email:
         resp.email_status = latest_email.status
 
@@ -135,13 +143,40 @@ def list_batches(
 
     total = query.count()
     items = (
-        query.order_by(desc(Batch.created_at))
+        query.options(joinedload(Batch.vendor), joinedload(Batch.raw_material))
+        .order_by(desc(Batch.created_at))
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
 
-    enriched_items = [_enrich_batch_response(b, db) for b in items]
+    batch_ids = [b.id for b in items if b.id]
+    intel_map = {}
+    email_map = {}
+    if batch_ids:
+        intels = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id.in_(batch_ids)).all()
+        intel_map = {bi.batch_id: bi for bi in intels}
+
+        emails = (
+            db.query(EmailEvent)
+            .filter(EmailEvent.batch_id.in_(batch_ids))
+            .order_by(desc(EmailEvent.created_at))
+            .all()
+        )
+        for em in emails:
+            if em.batch_id not in email_map:
+                email_map[em.batch_id] = em
+
+    enriched_items = [
+        _enrich_batch_response(
+            b,
+            db,
+            intel=intel_map.get(b.id),
+            latest_email=email_map.get(b.id),
+            preloaded=True,
+        )
+        for b in items
+    ]
 
     return BatchListResponse(
         items=enriched_items,

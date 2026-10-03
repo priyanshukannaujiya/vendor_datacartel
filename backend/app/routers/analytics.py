@@ -6,7 +6,7 @@ All numbers come directly from live database tables.
 from collections import defaultdict
 from datetime import date
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
 from app.core.database import get_db
@@ -154,15 +154,29 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
     recent_batches_table = []
     recent_batches = (
         db.query(Batch)
+        .options(joinedload(Batch.vendor), joinedload(Batch.raw_material))
         .order_by(desc(Batch.created_at))
         .limit(10)
         .all()
     )
 
+    recent_batch_ids = [b.id for b in recent_batches if b.id]
+    recent_emails = {}
+    if recent_batch_ids:
+        emails = (
+            db.query(EmailEvent)
+            .filter(EmailEvent.batch_id.in_(recent_batch_ids))
+            .order_by(desc(EmailEvent.created_at))
+            .all()
+        )
+        for em in emails:
+            if em.batch_id not in recent_emails:
+                recent_emails[em.batch_id] = em
+
     for b in recent_batches:
-        intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == b.id).first()
+        intel = intelligence_by_batch.get(b.id)
         pred = intel.ml_prediction if (intel and intel.ml_prediction) else {}
-        email = db.query(EmailEvent).filter(EmailEvent.batch_id == b.id).order_by(desc(EmailEvent.created_at)).first()
+        email = recent_emails.get(b.id)
 
         risk_sc = pred.get("risk_score")
         risk_lv = pred.get("risk_level")

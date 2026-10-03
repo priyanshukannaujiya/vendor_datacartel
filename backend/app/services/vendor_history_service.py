@@ -2,6 +2,7 @@ import math
 import logging
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.models.batch import Batch
 from app.models.vendor import Vendor
@@ -88,10 +89,18 @@ class VendorHistoryService:
 
         # 3. Documentation Completeness across past batches
         # Check percentage of past batches that have at least 2 associated documents
-        docs_per_batch = []
-        for b in past_batches:
-            doc_count = db.query(Document).filter(Document.batch_id == b.id).count()
-            docs_per_batch.append(min(1.0, doc_count / 3.0))  # normalized out of 3 standard docs
+        past_batch_ids = [b.id for b in past_batches if b.id]
+        doc_counts_map = {}
+        if past_batch_ids:
+            doc_counts = (
+                db.query(Document.batch_id, func.count(Document.id))
+                .filter(Document.batch_id.in_(past_batch_ids))
+                .group_by(Document.batch_id)
+                .all()
+            )
+            doc_counts_map = dict(doc_counts)
+
+        docs_per_batch = [min(1.0, doc_counts_map.get(b.id, 0) / 3.0) for b in past_batches]
         doc_completeness = (sum(docs_per_batch) / len(docs_per_batch)) if docs_per_batch else 0.85
 
         # 4. Delivery Reliability and Lead Times

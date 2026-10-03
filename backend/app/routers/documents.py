@@ -6,7 +6,7 @@ import uuid
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 
 from app.core.database import get_db
@@ -38,7 +38,8 @@ def list_documents(
 
     total = query.count()
     docs = (
-        query.order_by(desc(Document.created_at))
+        query.options(joinedload(Document.vendor), joinedload(Document.batch))
+        .order_by(desc(Document.created_at))
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()

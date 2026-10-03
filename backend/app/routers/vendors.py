@@ -80,14 +80,23 @@ def list_vendors(
         .all()
     )
 
+    counts_map = {}
+    if items:
+        vendor_ids = [v.id for v in items]
+        counts = (
+            db.query(Batch.vendor_id, func.count(Batch.id))
+            .filter(Batch.vendor_id.in_(vendor_ids))
+            .group_by(Batch.vendor_id)
+            .all()
+        )
+        counts_map = dict(counts)
+
     results = []
     for v in items:
-        # compute batch count
-        batch_count = db.query(Batch).filter(Batch.vendor_id == v.id).count()
         resp = VendorResponse.model_validate(v)
         resp.name = v.vendor_name
         resp.code = v.code
-        resp.total_batches = batch_count
+        resp.total_batches = counts_map.get(v.id, 0)
         results.append(resp)
 
     return VendorListResponse(

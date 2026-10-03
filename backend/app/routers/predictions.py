@@ -3,8 +3,9 @@ Predictions router returning ML risk predictions, risk distribution, and feature
 """
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import desc, or_
+import logging
 
 from app.core.database import get_db
 from app.models.intelligence import BatchIntelligence
@@ -13,11 +14,6 @@ from app.models.vendor import Vendor
 from app.models.raw_material import RawMaterial
 
 router = APIRouter(prefix="/predictions", tags=["Predictions"])
-
-
-import logging
-from sqlalchemy import or_
-
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +26,7 @@ def list_predictions(
     # Auto-generate intelligence for any batch lacking ml_prediction
     batches_without_pred = (
         db.query(Batch)
+        .options(joinedload(Batch.vendor), joinedload(Batch.raw_material))
         .outerjoin(BatchIntelligence, Batch.id == BatchIntelligence.batch_id)
         .filter(or_(BatchIntelligence.id.is_(None), BatchIntelligence.ml_prediction.is_(None)))
         .order_by(desc(Batch.created_at))
@@ -91,9 +88,20 @@ def list_predictions(
     total = query.count()
     records = query.offset((page - 1) * page_size).limit(page_size).all()
 
+    batch_ids = [r.batch_id for r in records if r.batch_id]
+    batches_map = {}
+    if batch_ids:
+        batches_list = (
+            db.query(Batch)
+            .options(joinedload(Batch.vendor), joinedload(Batch.raw_material))
+            .filter(Batch.id.in_(batch_ids))
+            .all()
+        )
+        batches_map = {b.id: b for b in batches_list}
+
     items = []
     for r in records:
-        batch = db.query(Batch).filter(Batch.id == r.batch_id).first()
+        batch = batches_map.get(r.batch_id)
         pred = r.ml_prediction or {}
         items.append({
             "id": str(r.id),
