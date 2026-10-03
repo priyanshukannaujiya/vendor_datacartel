@@ -1,0 +1,3 @@
+"""
+VendorIQ Backend Application Package
+"""

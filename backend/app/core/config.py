@@ -1,0 +1,106 @@
+import json
+from typing import List, Union
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """
+    Application configuration settings loaded from environment variables or .env file.
+    Follows VendorIQ PRD requirements.
+    """
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=True,
+    )
+
+    PROJECT_NAME: str = "VendorIQ API"
+    PROJECT_DESCRIPTION: str = "AI-Powered Supplier Qualification & Batch Intelligence Platform"
+    VERSION: str = "1.0.0"
+    API_V1_STR: str = "/api"
+
+    # Core required environment variables (defaults are safe placeholders for local dev)
+    DATABASE_URL: str = ""
+    JWT_SECRET: str = ""
+    FRONTEND_URL: str = "http://localhost:5173"
+    CORS_ORIGINS: Union[List[str], str] = []
+
+    # Optional configuration values from VendorIQ PRD
+    JWT_EXPIRE_MINUTES: int = 60
+    MAX_UPLOAD_MB: int = 10
+    UPLOAD_DIR: str = "./uploads"
+
+    @field_validator("JWT_EXPIRE_MINUTES", mode="before")
+    @classmethod
+    def parse_jwt_expire_minutes(cls, v: Union[str, int, None]) -> int:
+        if v == "" or v is None:
+            return 60
+        return int(v)
+
+    @field_validator("MAX_UPLOAD_MB", mode="before")
+    @classmethod
+    def parse_max_upload_mb(cls, v: Union[str, int, None]) -> int:
+        if v == "" or v is None:
+            return 10
+        return int(v)
+
+    @field_validator("FRONTEND_URL", mode="before")
+    @classmethod
+    def parse_frontend_url(cls, v: Union[str, None]) -> str:
+        if v == "" or v is None:
+            return "http://localhost:5173"
+        return str(v)
+
+    @field_validator("UPLOAD_DIR", mode="before")
+    @classmethod
+    def parse_upload_dir(cls, v: Union[str, None]) -> str:
+        if v == "" or v is None:
+            return "./uploads"
+        return str(v)
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Union[str, List[str], None]) -> List[str]:
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("[") and stripped.endswith("]"):
+                try:
+                    return json.loads(stripped)
+                except Exception:
+                    pass
+            return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+        elif isinstance(v, list):
+            return v
+        return []
+
+    @property
+    def all_cors_origins(self) -> List[str]:
+        """Combine CORS_ORIGINS list and FRONTEND_URL without duplicates."""
+        origins: List[str] = list(self.CORS_ORIGINS) if isinstance(self.CORS_ORIGINS, list) else []
+        if self.FRONTEND_URL and self.FRONTEND_URL not in origins:
+            origins.append(self.FRONTEND_URL)
+        return origins
+
+    @property
+    def sync_database_url(self) -> str:
+        """
+        Normalize DATABASE_URL for SQLAlchemy psycopg2 driver.
+        Ensures postgres:// or postgresql:// scheme uses psycopg2 driver (postgresql+psycopg2://).
+        """
+        url = self.DATABASE_URL
+        if not url:
+            return ""
+        if url.startswith("postgres://"):
+            url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return url
+
+
+settings = Settings()
