@@ -3,7 +3,7 @@ from app.core.database import SessionLocal
 from app.services.batch_service import update_batch_status
 
 
-def test_batch_crud_and_status_transitions(auth_client):
+def test_batch_crud_and_status_transitions(auth_client, db_session):
     uid = uuid.uuid4().hex[:6]
 
     # 1. Setup vendor and raw material
@@ -55,20 +55,20 @@ def test_batch_crud_and_status_transitions(auth_client):
     assert get_res.json()["id"] == batch_id
 
     # 5. Test update_batch_status shared helper transitions
-    with SessionLocal() as db:
-        # Dev 2 pipeline steps
-        b = update_batch_status(db, batch_id, "PROCESSING")
-        assert b.status == "PROCESSING"
+    db = db_session
+    # Dev 2 pipeline steps
+    b = update_batch_status(db, batch_id, "PROCESSING")
+    assert b.status == "PROCESSING"
 
-        b = update_batch_status(db, batch_id, "VALIDATED")
-        assert b.status == "VALIDATED"
+    b = update_batch_status(db, batch_id, "VALIDATED")
+    assert b.status == "VALIDATED"
 
-        b = update_batch_status(db, batch_id, "PREDICTED")
-        assert b.status == "PREDICTED"
+    b = update_batch_status(db, batch_id, "PREDICTED")
+    assert b.status == "PREDICTED"
 
-        # Dev 3 decision engine step
-        b = update_batch_status(db, batch_id, "APPROVED")
-        assert b.status == "APPROVED"
+    # Dev 3 decision engine step
+    b = update_batch_status(db, batch_id, "APPROVED")
+    assert b.status == "APPROVED"
 
     # Verify updated status reflects on API
     get_updated = auth_client.get(f"/api/batches/{batch_id}")

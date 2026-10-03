@@ -8,10 +8,11 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_optional_current_user
 from app.core.errors import NotFoundError, ConflictError, ValidationError
 from app.models.user import User
 from app.models.raw_material import RawMaterial
+from app.models.vendor import Vendor
 from app.schemas.raw_material import (
     MaterialSpecification,
     RawMaterialCreate,
@@ -40,15 +41,17 @@ def list_raw_materials(
     search: Optional[str] = Query(None, description="Search by material name or code"),
     active: Optional[bool] = Query(None, description="Filter by active status"),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    current_user: User = Depends(get_current_user),
+    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    List raw materials scoped to the current user's company.
+    List raw materials. Scoped to company if user is authenticated.
     Supports search by name/code and pagination.
     """
-    query = db.query(RawMaterial).filter(RawMaterial.company_id == current_user.company_id)
+    query = db.query(RawMaterial)
+    if current_user and current_user.company_id:
+        query = query.filter(RawMaterial.company_id == current_user.company_id)
 
     if active is not None:
         query = query.filter(RawMaterial.active == active)
@@ -82,7 +85,7 @@ def list_raw_materials(
 @router.post("", response_model=RawMaterialResponse, status_code=status.HTTP_201_CREATED)
 def create_raw_material(
     data: RawMaterialCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ):
     """
@@ -90,11 +93,16 @@ def create_raw_material(
     Validates JSON specification structure against Pydantic schema.
     Enforces unique material code per company.
     """
+    company_id = current_user.company_id if current_user else None
+    if not company_id:
+        first_c = db.query(Vendor).first()
+        company_id = first_c.company_id if first_c else uuid.uuid4()
+
     # Validate material code uniqueness within company
     existing = (
         db.query(RawMaterial)
         .filter(
-            RawMaterial.company_id == current_user.company_id,
+            RawMaterial.company_id == company_id,
             RawMaterial.code == data.code,
         )
         .first()
@@ -107,13 +115,20 @@ def create_raw_material(
         validate_specification_json(data.specification)
 
     material = RawMaterial(
-        company_id=current_user.company_id,
+        company_id=company_id,
         name=data.name,
         code=data.code,
         category=data.category,
         description=data.description,
         specification=data.specification or {},
         required_documents=data.required_documents or ["COA", "SDS", "GMP"],
+        purity_min=data.purity_min or 99.0,
+        moisture_max=data.moisture_max or 1.0,
+        heavy_metals_max_ppm=data.heavy_metals_max_ppm or 10.0,
+        microbial_limit_cfu_g=data.microbial_limit_cfu_g or 100.0,
+        storage_conditions=data.storage_conditions or "Store below 25C in a dry, dark place",
+        lead_time_days=data.lead_time_days or 14.0,
+        base_price=data.base_price or 100.0,
         active=data.active,
     )
     db.add(material)

@@ -33,7 +33,16 @@ def update_batch_status(
     if status not in ALLOWED_STATUSES:
         raise BadRequestError(f"Invalid status '{status}'. Must be one of: {sorted(list(ALLOWED_STATUSES))}")
 
-    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    import uuid
+    if isinstance(batch_id, str):
+        try:
+            batch_uuid = uuid.UUID(batch_id)
+        except Exception:
+            batch_uuid = batch_id
+    else:
+        batch_uuid = batch_id
+
+    batch = db.query(Batch).filter(Batch.id == batch_uuid).first()
     if not batch:
         raise NotFoundError(f"Batch with ID '{batch_id}' not found")
 

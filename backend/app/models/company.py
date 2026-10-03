@@ -33,3 +33,5 @@ class Company(Base):
     vendors = relationship("Vendor", back_populates="company", cascade="all, delete-orphan")
     raw_materials = relationship("RawMaterial", back_populates="company", cascade="all, delete-orphan")
     batches = relationship("Batch", back_populates="company", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="company", cascade="all, delete-orphan")
+

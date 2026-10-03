@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VendorIQ — Supplier Document Request</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #0f172a; }
+    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.04); }
+    .header { background: #0f172a; padding: 24px 32px; color: #ffffff; }
+    .logo { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+    .logo span { color: #3b82f6; }
+    .badge { display: inline-block; background: #2563eb; color: #ffffff; font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 4px 8px; border-radius: 4px; margin-top: 8px; letter-spacing: 0.5px; }
+    .body { padding: 32px; }
+    h1 { font-size: 18px; font-weight: 700; margin: 0 0 16px 0; color: #0f172a; }
+    p { font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 16px 0; }
+    .lot-card { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; margin: 20px 0; }
+    .lot-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; }
+    .lot-row:last-child { margin-bottom: 0; }
+    .lot-label { font-weight: 600; color: #64748b; }
+    .lot-value { font-weight: 700; color: #0f172a; font-family: monospace; }
+    .requirements { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 16px; margin: 20px 0; }
+    .req-title { font-size: 13px; font-weight: 700; color: #1e40af; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .req-list { margin: 0; padding-left: 20px; font-size: 13px; color: #1e3a8a; line-height: 1.6; }
+    .footer { background: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">Vendor<span>IQ</span></div>
+      <div class="badge">Official Batch Compliance Request</div>
+    </div>
+    <div class="body">
+      <h1>Action Required: Please Submit Batch PDF Documentation</h1>
+      <p>Dear <strong>{{ vendor_name }}</strong> Quality Assurance Team,</p>
+      <p>
+        In order to complete the incoming raw material qualification and safety compliance verification for shipment <strong>{{ batch_number }}</strong>, please provide the required quality documentation PDF files.
+      </p>
+
+      <div class="lot-card">
+        <div class="lot-row">
+          <span class="lot-label">Batch / Lot Number:</span>
+          <span class="lot-value">{{ batch_number }}</span>
+        </div>
+        <div class="lot-row">
+          <span class="lot-label">Raw Material:</span>
+          <span class="lot-value">{{ material_name }}</span>
+        </div>
+        <div class="lot-row">
+          <span class="lot-label">Required Minimum Purity:</span>
+          <span class="lot-value">&ge; {{ required_purity }}%</span>
+        </div>
+        <div class="lot-row">
+          <span class="lot-label">Order Quantity:</span>
+          <span class="lot-value">{{ quantity }} {{ unit }}</span>
+        </div>
+      </div>
+
+      <div class="requirements">
+        <div class="req-title">Mandatory Documents to Return (PDF Format):</div>
+        <ul class="req-list">
+          <li><strong>Certificate of Analysis (COA):</strong> Signed laboratory analysis verifying HPLC/GC purity assay (&ge; {{ required_purity }}%), heavy metals (&lt; 5 ppm), and physical tolerances.</li>
+          <li><strong>Safety Data Sheet (SDS):</strong> Current 16-section GHS compliance sheet.</li>
+          <li><strong>cGMP Certificate / Lot Release:</strong> Cleanroom manufacture and packaging authorization.</li>
+        </ul>
+      </div>
+
+      <p>
+        Please reply directly to this email with your PDF attachments, or submit them through the VendorIQ supplier intake portal referencing Batch <strong>{{ batch_number }}</strong>.
+      </p>
+      <p>
+        Upon receipt, VendorIQ AI-OCR and Automated Compliance Engine will review your analytical records for expedited release.
+      </p>
+    </div>
+    <div class="footer">
+      This is an automated request issued by the VendorIQ Supplier Quality & Batch Intelligence Platform.<br>
+      Reference ID: {{ reference_id }} • Tenant: BioPharma Core Corp
+    </div>
+  </div>
+</body>
+</html>

@@ -17,8 +17,13 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: Optional[str] = None
+    username: Optional[str] = None
     password: str
+
+    @property
+    def login_email(self) -> str:
+        return (self.email or self.username or "").strip().lower()
 
 
 class TokenResponse(BaseModel):

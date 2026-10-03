@@ -1,5 +1,5 @@
 import json
-from typing import List, Union
+from typing import List, Union, Optional
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,23 +20,39 @@ class Settings(BaseSettings):
     PROJECT_DESCRIPTION: str = "AI-Powered Supplier Qualification & Batch Intelligence Platform"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api"
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = True
 
-    # Core required environment variables (defaults are safe placeholders for local dev)
+    # Core required environment variables
     DATABASE_URL: str = ""
-    JWT_SECRET: str = ""
+    JWT_SECRET: str = "vendoriq-default-secret-key-change-in-production-2026"
     FRONTEND_URL: str = "http://localhost:5173"
     CORS_ORIGINS: Union[List[str], str] = []
 
     # Optional configuration values from VendorIQ PRD
-    JWT_EXPIRE_MINUTES: int = 60
+    JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
     MAX_UPLOAD_MB: int = 10
     UPLOAD_DIR: str = "./uploads"
+
+    # Developer 2: Kimi K3 External Reasoning Layer
+    KIMI_API_KEY: Optional[str] = None
+    KIMI_API_BASE: str = "https://api.moonshot.cn/v1"
+    KIMI_MODEL: str = "moonshot-v1-8k"
+    KIMI_TIMEOUT_SECONDS: float = 30.0
+
+    # Developer 3: Google SMTP Settings
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: Optional[str] = None
+    SMTP_FROM_NAME: str = "VendorIQ"
 
     @field_validator("JWT_EXPIRE_MINUTES", mode="before")
     @classmethod
     def parse_jwt_expire_minutes(cls, v: Union[str, int, None]) -> int:
         if v == "" or v is None:
-            return 60
+            return 1440
         return int(v)
 
     @field_validator("MAX_UPLOAD_MB", mode="before")
@@ -44,6 +60,13 @@ class Settings(BaseSettings):
     def parse_max_upload_mb(cls, v: Union[str, int, None]) -> int:
         if v == "" or v is None:
             return 10
+        return int(v)
+
+    @field_validator("SMTP_PORT", mode="before")
+    @classmethod
+    def parse_smtp_port(cls, v: Union[str, int, None]) -> int:
+        if v == "" or v is None:
+            return 587
         return int(v)
 
     @field_validator("FRONTEND_URL", mode="before")
@@ -92,13 +115,14 @@ class Settings(BaseSettings):
         """
         Normalize DATABASE_URL for SQLAlchemy psycopg2 driver.
         Ensures postgres:// or postgresql:// scheme uses psycopg2 driver (postgresql+psycopg2://).
+        Falls back to local sqlite when DATABASE_URL is not set.
         """
         url = self.DATABASE_URL
         if not url:
-            return ""
+            return "sqlite:///./vendoriq.db"
         if url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql+psycopg2://", 1)
-        elif url.startswith("postgresql://"):
+        elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg2://"):
             url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
         return url
 

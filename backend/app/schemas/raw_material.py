@@ -29,6 +29,14 @@ class RawMaterialBase(BaseModel):
     code: str = Field(..., min_length=1, max_length=100)
     category: Optional[str] = None
     description: Optional[str] = None
+    cas_number: Optional[str] = None
+    purity_min: Optional[float] = 99.0
+    moisture_max: Optional[float] = 1.0
+    heavy_metals_max_ppm: Optional[float] = 10.0
+    microbial_limit_cfu_g: Optional[float] = 100.0
+    storage_conditions: Optional[str] = "Store below 25C in a dry, dark place"
+    lead_time_days: Optional[float] = 14.0
+    base_price: Optional[float] = 100.0
     specification: Optional[Dict[str, Any]] = None
     required_documents: Optional[List[str]] = Field(default_factory=lambda: ["COA", "SDS", "GMP"])
     active: bool = True
@@ -43,6 +51,14 @@ class RawMaterialUpdate(BaseModel):
     code: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
+    cas_number: Optional[str] = None
+    purity_min: Optional[float] = None
+    moisture_max: Optional[float] = None
+    heavy_metals_max_ppm: Optional[float] = None
+    microbial_limit_cfu_g: Optional[float] = None
+    storage_conditions: Optional[str] = None
+    lead_time_days: Optional[float] = None
+    base_price: Optional[float] = None
     specification: Optional[Dict[str, Any]] = None
     required_documents: Optional[List[str]] = None
     active: Optional[bool] = None

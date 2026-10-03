@@ -1,11 +1,20 @@
 """
 VendorIQ - AI-Powered Supplier Qualification & Batch Intelligence Platform
-Main FastAPI Application Entrypoint
+Main FastAPI Application Entrypoint (Unified Backend)
 """
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.errors import setup_exception_handlers
+from app.core.database import get_engine, Base
+import app.models  # Register all models on Base.metadata
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+logger = logging.getLogger("vendoriq")
 
 # Initialize FastAPI application with project metadata
 app = FastAPI(
@@ -17,14 +26,14 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# Configure centralized error handling conforming to PRD Section 27
+# Configure centralized error handling
 setup_exception_handlers(app)
 
-# Configure CORS restrictions conforming to PRD Section 26
-# Only allowed origins from FRONTEND_URL and CORS_ORIGINS are accepted
+# Configure CORS restrictions
+# Allows FRONTEND_URL and CORS_ORIGINS from settings, with localhost defaults for local dev
 cors_origins = settings.all_cors_origins
 if not cors_origins:
-    cors_origins = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,6 +42,18 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def on_startup():
+    logger.info(f"Starting {settings.PROJECT_NAME} v{settings.VERSION} [{settings.ENVIRONMENT}]")
+    try:
+        # Create tables if not existing (especially useful for local dev / sqlite)
+        engine = get_engine()
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database schema initialized.")
+    except Exception as e:
+        logger.warning(f"Database schema auto-creation notice: {e}")
 
 
 @app.get("/health", tags=["Health"])
@@ -51,13 +72,19 @@ def api_health_check():
     return {"status": "healthy"}
 
 
-# Register API v1 Routers under /api
+# Register API Routers under /api
 from app.routers import (
     auth_router,
     vendors_router,
     raw_materials_router,
     vendor_materials_router,
     batches_router,
+    documents_router,
+    predictions_router,
+    analytics_router,
+    alerts_router,
+    email_events_router,
+    settings_router,
 )
 
 app.include_router(auth_router, prefix=settings.API_V1_STR)
@@ -65,3 +92,9 @@ app.include_router(vendors_router, prefix=settings.API_V1_STR)
 app.include_router(raw_materials_router, prefix=settings.API_V1_STR)
 app.include_router(vendor_materials_router, prefix=settings.API_V1_STR)
 app.include_router(batches_router, prefix=settings.API_V1_STR)
+app.include_router(documents_router, prefix=settings.API_V1_STR)
+app.include_router(predictions_router, prefix=settings.API_V1_STR)
+app.include_router(analytics_router, prefix=settings.API_V1_STR)
+app.include_router(alerts_router, prefix=settings.API_V1_STR)
+app.include_router(email_events_router, prefix=settings.API_V1_STR)
+app.include_router(settings_router, prefix=settings.API_V1_STR)

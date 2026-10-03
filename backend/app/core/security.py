@@ -110,6 +110,7 @@ def get_current_user(
     rejects inactive users (401), and returns the User object.
     Provides tenant isolation by verifying company_id.
     """
+    import uuid
     from app.models.user import User
 
     if not credentials or not credentials.credentials:
@@ -120,9 +121,24 @@ def get_current_user(
     company_id = payload.get("company_id")
 
     try:
-        user = db.query(User).filter(User.id == user_id, User.company_id == company_id).first()
+        u_uuid = uuid.UUID(str(user_id)) if user_id else None
     except Exception:
-        raise UnauthorizedError("Invalid user credentials or database error")
+        u_uuid = user_id
+
+    try:
+        c_uuid = uuid.UUID(str(company_id)) if company_id else None
+    except Exception:
+        c_uuid = company_id
+
+    try:
+        user = db.query(User).filter(User.id == u_uuid).first()
+        if user and c_uuid and user.company_id != c_uuid:
+            user = None
+    except Exception:
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+        except Exception:
+            raise UnauthorizedError("Invalid user credentials or database error")
 
     if not user:
         raise UnauthorizedError("User not found or does not belong to specified company")
@@ -130,3 +146,35 @@ def get_current_user(
         raise UnauthorizedError("User account is inactive")
 
     return user
+
+
+def get_optional_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Any = Depends(get_db),
+) -> Optional[Any]:
+    """
+    Safely retrieves the current user if a valid bearer token is present.
+    Returns None if unauthenticated, without raising 401.
+    """
+    import uuid
+    from app.models.user import User
+
+    if not credentials or not credentials.credentials:
+        return None
+
+    try:
+        payload = decode_access_token(credentials.credentials)
+        user_id = payload.get("sub")
+        try:
+            u_uuid = uuid.UUID(str(user_id)) if user_id else None
+        except Exception:
+            u_uuid = user_id
+
+        user = db.query(User).filter(User.id == u_uuid).first()
+        if user and user.is_active:
+            return user
+    except Exception:
+        pass
+
+    return None
+
