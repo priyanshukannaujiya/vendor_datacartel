@@ -41,8 +41,12 @@ export const DocumentsPage: React.FC = () => {
   const uploadMutation = useMutation({
     mutationFn: (data: { file: File; meta: { document_type: string; batch_id?: string } }) =>
       documentApi.upload(data.file, data.meta),
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['documents'] });
+      queryClient.invalidateQueries({ queryKey: ['batches'] });
+      if (variables.meta.batch_id) {
+        queryClient.invalidateQueries({ queryKey: ['batch', variables.meta.batch_id] });
+      }
       setIsUploadModalOpen(false);
       setUploadFile(null);
       setSelectedBatchId('');
@@ -180,20 +184,24 @@ export const DocumentsPage: React.FC = () => {
                     </td>
                     <td>
                       <span className="text-xs text-slate-600">
-                        {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : '184 KB'}
+                        {doc.file_size != null ? `${(doc.file_size / 1024).toFixed(1)} KB` : '—'}
                       </span>
                     </td>
                     <td>
-                      <span className="badge badge-approved text-xs">
-                        <CheckCircle2 className="w-3 h-3" /> Extracted
+                      <span className={`badge text-xs ${
+                        ['PROCESSED', 'EXTRACTED', 'COMPLETED'].includes(doc.extraction_status?.toUpperCase() || '')
+                          ? 'badge-approved'
+                          : 'badge-pending'
+                      }`}>
+                        {doc.extraction_status || 'UPLOADED'}
                       </span>
                     </td>
                     <td>
-                      <span className="badge badge-info text-xs">Verified</span>
+                      <span className="badge badge-info text-xs">{doc.validation_status || 'Not validated'}</span>
                     </td>
                     <td>
                       <span className="text-xs text-slate-600">
-                        {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'Today'}
+                        {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '—'}
                       </span>
                     </td>
                     <td>
@@ -234,7 +242,7 @@ export const DocumentsPage: React.FC = () => {
                   <strong className="text-slate-900">Type:</strong> {selectedDoc.document_type}
                 </p>
                 <p>
-                  <strong className="text-slate-900">Parsing Engine:</strong> PyPDF & Structured OCR Monograph Analyzer
+                  <strong className="text-slate-900">Processing Status:</strong> {selectedDoc.extraction_status || 'Not processed'}
                 </p>
               </div>
 
@@ -242,22 +250,13 @@ export const DocumentsPage: React.FC = () => {
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-2">
                   Extracted Chemical & Lot Entities
                 </h4>
-                <pre className="p-3 bg-slate-900 text-slate-200 rounded-lg text-xs font-mono overflow-x-auto">
-                  {JSON.stringify(
-                    selectedDoc.extracted_data || {
-                      batch_number: 'VC-2026-104',
-                      chemical_name: 'L-Ascorbic Acid',
-                      purity_assay: '99.3%',
-                      melting_point: '190-192°C',
-                      heavy_metals: '< 1 ppm',
-                      moisture_content: '0.08%',
-                      analyst: 'Dr. M. Vance, Ph.D.',
-                      compliance: 'USP-NF Compliant',
-                    },
-                    null,
-                    2
-                  )}
-                </pre>
+                {selectedDoc.extracted_data ? (
+                  <pre className="p-3 bg-slate-900 text-slate-200 rounded-lg text-xs font-mono overflow-x-auto">
+                    {JSON.stringify(selectedDoc.extracted_data, null, 2)}
+                  </pre>
+                ) : (
+                  <p className="text-xs text-slate-500">No extracted fields are stored for this document.</p>
+                )}
               </div>
             </div>
             <div className="px-6 py-3 border-t border-slate-100 bg-slate-50 flex justify-end">
@@ -285,7 +284,7 @@ export const DocumentsPage: React.FC = () => {
                 <input
                   type="file"
                   required
-                  accept=".pdf,.docx,.xlsx,.png,.jpg"
+                  accept=".pdf"
                   onChange={(e) => setUploadFile(e.target.files ? e.target.files[0] : null)}
                   className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
                 />
@@ -337,6 +336,13 @@ export const DocumentsPage: React.FC = () => {
                   {uploadMutation.isPending ? 'Extracting...' : 'Upload & Extract'}
                 </button>
               </div>
+              {uploadMutation.isError && (
+                <p role="alert" className="text-xs text-rose-700">
+                  {(uploadMutation.error as any)?.response?.data?.detail ||
+                    (uploadMutation.error as Error)?.message ||
+                    'Document upload failed.'}
+                </p>
+              )}
             </form>
           </div>
         </div>

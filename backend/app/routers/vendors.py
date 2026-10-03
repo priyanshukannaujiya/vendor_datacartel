@@ -15,6 +15,7 @@ from app.models.user import User
 from app.models.vendor import Vendor
 from app.models.batch import Batch
 from app.models.document import Document
+from app.models.intelligence import BatchIntelligence
 from app.schemas.vendor import (
     VendorCreate,
     VendorUpdate,
@@ -144,6 +145,59 @@ def create_vendor(
     db.commit()
     db.refresh(vendor)
 
+    # Dispatch automated onboarding & document request email via Google SMTP
+    recipient = vendor.email or vendor.contact_email
+    if recipient:
+        try:
+            from app.services.email_service import send_email, EmailDeliveryError
+            from app.services.email_templates import render_document_request_email
+            from app.services.audit_service import record_audit_event
+            from app.models.decision import EmailEvent
+
+            subject, html_content = render_document_request_email(
+                reference_id=str(vendor.id),
+                vendor_name=vendor.vendor_name,
+                batch_number="ONBOARDING",
+                material_name="Raw Material Release Certificates (COA, SDS, GMP)",
+            )
+            email_event = EmailEvent(
+                company_id=vendor.company_id,
+                vendor_id=vendor.id,
+                recipient_email=recipient,
+                subject=subject,
+                email_type="VENDOR_WELCOME_DOC_REQUEST",
+                status="PENDING",
+                provider="GOOGLE_SMTP",
+                html_content=html_content,
+                text_content=f"Welcome {vendor.vendor_name}! Please submit your compliance and quality assurance PDF documents.",
+            )
+            db.add(email_event)
+            db.commit()
+
+            try:
+                send_email(
+                    recipient=recipient,
+                    subject=subject,
+                    html_content=html_content,
+                    text_content=email_event.text_content,
+                )
+                email_event.status = "SENT"
+                email_event.sent_at = datetime.now(timezone.utc)
+            except EmailDeliveryError as exc:
+                email_event.status = "FAILED"
+                email_event.error_message = str(exc)
+
+            record_audit_event(
+                db,
+                "Vendor Registered & Onboarding Email Sent",
+                company_id=vendor.company_id,
+                vendor_id=vendor.id,
+                details={"recipient": recipient, "email_status": email_event.status},
+                commit=True,
+            )
+        except Exception:
+            pass
+
     resp = VendorResponse.model_validate(vendor)
     resp.name = vendor.vendor_name
     resp.code = vendor.code
@@ -218,7 +272,7 @@ def get_vendor(
     total_b = len(batches)
     approved_b = sum(1 for b in batches if b.status == "APPROVED")
     rejected_b = sum(1 for b in batches if b.status == "REJECTED")
-    app_rate = (approved_b / total_b) if total_b > 0 else (vendor.approval_rate or 0.95)
+    app_rate = (approved_b / total_b) if total_b > 0 else None
 
     historical_batches = [
         {
@@ -244,49 +298,51 @@ def get_vendor(
     ]
 
     certifications = [
-        {"name": "GMP Certificate", "status": vendor.certification_status, "valid_until": "2027-12-31"},
-        {"name": "ISO 9001:2015", "status": "VERIFIED", "valid_until": "2028-06-30"},
-        {"name": "COA Compliance Standard", "status": "COMPLIANT", "valid_until": "2026-12-31"},
+        {
+            "name": d.filename,
+            "status": d.status,
+            "document_type": d.document_type,
+        }
+        for d in docs
+        if d.document_type and d.document_type.upper() in {"GMP", "CERTIFICATE", "CERTIFICATION"}
     ]
 
-    base_score = float(vendor.risk_score or 15.0)
-    risk_trend = [
-        {"month": "Nov", "risk_score": max(5.0, base_score - 4.0)},
-        {"month": "Dec", "risk_score": max(5.0, base_score - 2.0)},
-        {"month": "Jan", "risk_score": max(5.0, base_score + 1.0)},
-        {"month": "Feb", "risk_score": max(5.0, base_score - 1.0)},
-        {"month": "Mar", "risk_score": base_score},
-    ]
-
-    kimi_assessment = {
-        "summary": f"Vendor {vendor.vendor_name} exhibits a {vendor.tier} profile with {int(app_rate * 100)}% approval rate across {total_b} tracked batches.",
-        "key_findings": [
-            f"Delivery reliability track record stands at {int((vendor.delivery_reliability or 0.95) * 100)}%.",
-            f"Active certifications: {vendor.certification_status}.",
-            f"{len(docs)} compliance documents registered in system.",
-        ],
-        "risk_factors": (
-            ["High rejection frequency observed in historical lots", "Material purity deviations detected"]
-            if base_score >= 50
-            else ["Stable batch quality consistency with zero critical non-conformances"]
-        ),
-        "recommended_actions": (
-            ["Perform mandatory on-site audit before issuing next purchase order", "Enforce 100% lab pre-shipment testing"]
-            if base_score >= 50
-            else ["Maintain routine automated qualification pipeline", "Renew GMP certification verification in Q4"]
-        ),
-    }
+    intelligence_records = (
+        db.query(BatchIntelligence)
+        .filter(BatchIntelligence.batch_id.in_([b.id for b in batches]))
+        .all()
+        if batches
+        else []
+    )
+    intelligence_by_batch = {record.batch_id: record for record in intelligence_records}
+    risk_trend = []
+    latest_risk_score = None
+    latest_kimi_assessment = None
+    for batch in batches:
+        intelligence = intelligence_by_batch.get(batch.id)
+        prediction = intelligence.ml_prediction if intelligence and intelligence.ml_prediction else None
+        if prediction and prediction.get("risk_score") is not None:
+            risk_score = float(prediction["risk_score"])
+            risk_trend.append({
+                "month": batch.created_at.strftime("%b %Y") if batch.created_at else None,
+                "risk_score": risk_score,
+            })
+            if latest_risk_score is None:
+                latest_risk_score = risk_score
+        if latest_kimi_assessment is None and intelligence and intelligence.kimi_analysis:
+            latest_kimi_assessment = intelligence.kimi_analysis
 
     resp = VendorDetailResponse.model_validate(vendor)
     resp.name = vendor.vendor_name
     resp.code = vendor.code
     resp.total_batches = total_b
-    resp.approval_rate = round(app_rate, 2)
-    resp.quality_consistency = vendor.quality_score or 98.0
-    resp.documentation_completeness = 0.95 if docs else 0.80
+    resp.risk_score = latest_risk_score
+    resp.approval_rate = round(app_rate, 2) if app_rate is not None else None
+    resp.quality_consistency = vendor.quality_score
+    resp.documentation_completeness = 1.0 if docs else 0.0
     resp.health = {
         "status": vendor.status,
-        "score": 100 - int(base_score),
+        "score": 100 - int(latest_risk_score) if latest_risk_score is not None else None,
         "approved_batches": approved_b,
         "rejected_batches": rejected_b,
         "total_batches": total_b,
@@ -295,8 +351,12 @@ def get_vendor(
     resp.documents = documents
     resp.certifications = certifications
     resp.risk_trend = risk_trend
-    resp.kimi_assessment = kimi_assessment
-    resp.recommended_actions = kimi_assessment["recommended_actions"]
+    resp.kimi_assessment = latest_kimi_assessment
+    resp.recommended_actions = (
+        latest_kimi_assessment.get("recommended_actions", [])
+        if latest_kimi_assessment
+        else []
+    )
 
     return resp
 

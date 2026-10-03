@@ -357,7 +357,7 @@ export const SettingsPage: React.FC = () => {
             <input
               type="text"
               readOnly
-              value="BioPharma Core Corp"
+              value={user?.company_name || 'Company information unavailable'}
               className="form-input bg-slate-50 text-slate-800"
             />
           </div>
@@ -366,7 +366,7 @@ export const SettingsPage: React.FC = () => {
             <input
               type="text"
               readOnly
-              value={user?.email || 'admin@vendoriq.com'}
+              value={user?.email || 'Account information unavailable'}
               className="form-input bg-slate-50 font-mono text-xs text-slate-800"
             />
           </div>

@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     SMTP_FROM: Optional[str] = None
     SMTP_FROM_NAME: str = "VendorIQ"
 
+    # Optional Gmail inbox polling for supplier PDF replies.
+    IMAP_ENABLED: bool = False
+    IMAP_HOST: str = "imap.gmail.com"
+    IMAP_PORT: int = 993
+    IMAP_USERNAME: Optional[str] = None
+    IMAP_PASSWORD: Optional[str] = None
+    IMAP_FOLDER: str = "INBOX"
+    IMAP_POLL_INTERVAL_SECONDS: int = 120
+    IMAP_LOOKBACK_DAYS: int = 30
+
     @field_validator("JWT_EXPIRE_MINUTES", mode="before")
     @classmethod
     def parse_jwt_expire_minutes(cls, v: Union[str, int, None]) -> int:
@@ -68,6 +78,27 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return 587
         return int(v)
+
+    @field_validator("IMAP_PORT", mode="before")
+    @classmethod
+    def parse_imap_port(cls, v: Union[str, int, None]) -> int:
+        if v == "" or v is None:
+            return 993
+        return int(v)
+
+    @field_validator("IMAP_POLL_INTERVAL_SECONDS", mode="before")
+    @classmethod
+    def parse_imap_poll_interval(cls, v: Union[str, int, None]) -> int:
+        if v == "" or v is None:
+            return 120
+        return max(30, int(v))
+
+    @field_validator("IMAP_LOOKBACK_DAYS", mode="before")
+    @classmethod
+    def parse_imap_lookback_days(cls, v: Union[str, int, None]) -> int:
+        if v == "" or v is None:
+            return 30
+        return max(1, int(v))
 
     @field_validator("FRONTEND_URL", mode="before")
     @classmethod

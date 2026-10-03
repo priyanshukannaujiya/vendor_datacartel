@@ -1,5 +1,6 @@
 from enum import Enum
-from typing import Optional, Any, Dict, List
+from typing import Optional, Any, Dict, List, Union
+from uuid import UUID
 from pydantic import BaseModel, Field
 
 
@@ -61,7 +62,7 @@ class GenericExtractionData(BaseModel):
 
 
 class DocumentProcessResult(BaseModel):
-    document_id: Optional[int] = None
+    document_id: Optional[Union[UUID, str, int]] = None
     filename: str
     document_type: DocumentType
     status: DocumentExtractionStatus

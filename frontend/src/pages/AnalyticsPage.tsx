@@ -39,6 +39,19 @@ export const AnalyticsPage: React.FC = () => {
     );
   }
 
+  const purityValues = analytics.quality_trend
+    .map((item) => item.average_purity)
+    .filter((value): value is number => value != null);
+  const meanPurity = purityValues.length
+    ? purityValues.reduce((total, value) => total + value, 0) / purityValues.length
+    : null;
+  const resolvedBatches =
+    analytics.approved_batches + analytics.rejected_batches +
+    analytics.batch_approval_trend.reduce((total, item) => total + item.review, 0);
+  const approvedShare = resolvedBatches
+    ? (analytics.approved_batches / resolvedBatches) * 100
+    : null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -58,11 +71,13 @@ export const AnalyticsPage: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="v-card p-5">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Portfolio Health Index
+            Vendors at Elevated Risk
           </span>
-          <div className="text-3xl font-extrabold text-slate-900 mt-2">87.4 / 100</div>
-          <p className="text-xs text-emerald-600 mt-1 font-medium">
-            +3.2% vs previous quarter across all suppliers
+          <div className="text-3xl font-extrabold text-slate-900 mt-2">
+            {analytics.high_risk_vendors} / {analytics.total_vendors}
+          </div>
+          <p className="text-xs text-slate-500 mt-1 font-medium">
+            Based on current stored vendor risk scores
           </p>
         </div>
 
@@ -70,19 +85,23 @@ export const AnalyticsPage: React.FC = () => {
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
             Average Assay Purity
           </span>
-          <div className="text-3xl font-extrabold text-slate-900 mt-2">99.18%</div>
-          <p className="text-xs text-blue-600 mt-1 font-medium">
-            Benchmark threshold requirement: ≥99.00%
+          <div className="text-3xl font-extrabold text-slate-900 mt-2">
+            {meanPurity == null ? '—' : `${meanPurity.toFixed(2)}%`}
+          </div>
+          <p className="text-xs text-slate-500 mt-1 font-medium">
+            Average of recorded batch purity values in the displayed periods
           </p>
         </div>
 
         <div className="v-card p-5">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Automated Clearance Rate
+            Approved Share of Resolved Batches
           </span>
-          <div className="text-3xl font-extrabold text-slate-900 mt-2">91.7%</div>
+          <div className="text-3xl font-extrabold text-slate-900 mt-2">
+            {approvedShare == null ? '—' : `${approvedShare.toFixed(1)}%`}
+          </div>
           <p className="text-xs text-slate-500 mt-1 font-medium">
-            Batches approved autonomously without human override
+            Approved decisions divided by approved, rejected, and review decisions
           </p>
         </div>
       </div>
@@ -110,7 +129,7 @@ export const AnalyticsPage: React.FC = () => {
 
         <div className="v-card p-5">
           <h3 className="text-sm font-semibold text-slate-900 mb-1">Monthly Purity & Compliance Trajectory</h3>
-          <p className="text-xs text-slate-500 mb-4">Mean purity versus regulatory baseline</p>
+          <p className="text-xs text-slate-500 mb-4">Observed batch purity and validation outcomes</p>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={analytics.quality_trend || []}>

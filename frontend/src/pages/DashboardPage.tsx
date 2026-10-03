@@ -103,7 +103,7 @@ export const DashboardPage: React.FC = () => {
       title: 'Total Vendors',
       value: analytics.total_vendors,
       icon: Users,
-      trend: '+2 this month',
+      trend: 'Registered supplier records',
       color: 'text-blue-600',
       bg: 'bg-blue-50',
     },
@@ -111,7 +111,7 @@ export const DashboardPage: React.FC = () => {
       title: 'Batches Processed',
       value: analytics.batches_processed,
       icon: Boxes,
-      trend: '100% verified',
+      trend: 'Recorded batch assessments',
       color: 'text-indigo-600',
       bg: 'bg-indigo-50',
     },
@@ -119,7 +119,9 @@ export const DashboardPage: React.FC = () => {
       title: 'Approved Batches',
       value: analytics.approved_batches,
       icon: CheckCircle,
-      trend: `${((analytics.approved_batches / (analytics.batches_processed || 1)) * 100).toFixed(0)}% approval rate`,
+      trend: analytics.batches_processed > 0
+        ? `${((analytics.approved_batches / analytics.batches_processed) * 100).toFixed(0)}% approval rate`
+        : 'No batch assessments recorded',
       color: 'text-emerald-600',
       bg: 'bg-emerald-50',
     },
@@ -127,7 +129,7 @@ export const DashboardPage: React.FC = () => {
       title: 'Rejected Batches',
       value: analytics.rejected_batches,
       icon: XCircle,
-      trend: 'Quality standard fail',
+      trend: 'Recorded rejected decisions',
       color: 'text-rose-600',
       bg: 'bg-rose-50',
     },
@@ -135,7 +137,7 @@ export const DashboardPage: React.FC = () => {
       title: 'High Risk Vendors',
       value: analytics.high_risk_vendors,
       icon: AlertTriangle,
-      trend: 'Requires audit',
+      trend: 'Based on available risk scores',
       color: 'text-orange-600',
       bg: 'bg-orange-50',
     },
@@ -143,7 +145,7 @@ export const DashboardPage: React.FC = () => {
       title: 'Pending Reviews',
       value: analytics.pending_reviews,
       icon: Clock,
-      trend: 'Awaiting decision',
+      trend: 'Awaiting assessment or decision',
       color: 'text-amber-600',
       bg: 'bg-amber-50',
     },
@@ -345,17 +347,17 @@ export const DashboardPage: React.FC = () => {
                         <div className="text-xs text-slate-600">{vendor.vendor_code}</div>
                       </td>
                       <td>
-                        <span className="font-semibold text-rose-600">{vendor.risk_score?.toFixed(1) || 75.0}</span>
+                        <span className="font-semibold text-rose-600">{vendor.risk_score?.toFixed(1) ?? '—'}</span>
                       </td>
                       <td>
                         <div className="flex items-center gap-1.5">
                           <div className="w-16 bg-slate-100 rounded-full h-1.5 overflow-hidden">
                             <div
                               className="bg-rose-500 h-1.5 rounded-full"
-                              style={{ width: `${vendor.approval_rate || 50}%` }}
+                              style={{ width: `${vendor.approval_rate ?? 0}%` }}
                             ></div>
                           </div>
-                          <span className="text-xs text-slate-600">{vendor.approval_rate || 50}%</span>
+                          <span className="text-xs text-slate-600">{vendor.approval_rate == null ? '—' : `${vendor.approval_rate}%`}</span>
                         </div>
                       </td>
                       <td>{getRiskBadge(vendor.risk_level)}</td>
@@ -412,7 +414,7 @@ export const DashboardPage: React.FC = () => {
                         {batch.batch_number}
                       </td>
                       <td className="text-slate-700">
-                        {batch.vendor?.name || 'Assigned Vendor'}
+                        {batch.vendor?.name || 'Vendor not recorded'}
                       </td>
                       <td>{getRiskBadge(batch.risk_level)}</td>
                       <td>{getDecisionBadge(batch.decision || batch.decision_status)}</td>

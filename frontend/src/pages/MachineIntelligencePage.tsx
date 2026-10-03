@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import {
   Cpu,
   Activity,
@@ -111,10 +112,13 @@ export const MachineIntelligencePage: React.FC = () => {
               </div>
 
               <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-[11px] font-medium text-slate-400">Release Stage: Private Beta Q4 2026</span>
-                <button disabled className="btn-secondary text-xs opacity-60 cursor-not-allowed">
-                  <span>Notify When Live</span>
-                </button>
+                <span className="text-[11px] font-medium text-slate-500">
+                  Machine telemetry is not available in this release.
+                </span>
+                <Link to="/predictions" className="btn-secondary text-xs">
+                  <span>View Supplier Risk Scores</span>
+                  <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                </Link>
               </div>
             </div>
           );

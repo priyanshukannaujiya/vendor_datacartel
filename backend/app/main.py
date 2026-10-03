@@ -8,6 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.errors import setup_exception_handlers
 from app.core.database import get_engine, Base
+from app.services.inbound_email_service import (
+    start_inbound_email_worker,
+    stop_inbound_email_worker,
+)
 import app.models  # Register all models on Base.metadata
 
 logging.basicConfig(
@@ -54,6 +58,12 @@ def on_startup():
         logger.info("Database schema initialized.")
     except Exception as e:
         logger.warning(f"Database schema auto-creation notice: {e}")
+    start_inbound_email_worker()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    stop_inbound_email_worker()
 
 
 @app.get("/health", tags=["Health"])

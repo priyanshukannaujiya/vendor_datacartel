@@ -95,8 +95,12 @@ export const VendorsPage: React.FC = () => {
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['batches'] });
       setDispatchStatus({
-        type: 'success',
-        message: res.message || `Request email sent to ${res.recipient} via Google SMTP!`,
+        type: res.success ? 'success' : 'error',
+        message: res.message || (
+          res.success
+            ? `Request email sent to ${res.recipient} via Google SMTP!`
+            : `Email delivery failed for ${res.recipient}.`
+        ),
       });
     },
     onError: (err: any) => {
@@ -341,7 +345,7 @@ export const VendorsPage: React.FC = () => {
                       </td>
                       <td>
                         <span className="text-xs font-medium text-slate-600">
-                          Pharmaceutical & Cosmetics
+                          {vendor.industry || 'Not recorded'}
                         </span>
                       </td>
                       <td>
@@ -369,12 +373,14 @@ export const VendorsPage: React.FC = () => {
                       </td>
                       <td>
                         <span className="text-xs font-semibold text-slate-800">
-                          {vendor.quality_score ? `${vendor.quality_score}%` : `${vendor.avg_purity || 98.5}%`}
+                          {(vendor.quality_score ?? vendor.avg_purity) == null
+                            ? '—'
+                            : `${vendor.quality_score ?? vendor.avg_purity}%`}
                         </span>
                       </td>
                       <td>
                         <span className="text-xs font-semibold text-slate-800">
-                          {vendor.delivery_score ? `${vendor.delivery_score}%` : `${vendor.on_time_delivery_rate || 95}%`}
+                          {vendor.delivery_score == null ? '—' : `${vendor.delivery_score}%`}
                         </span>
                       </td>
                       <td>
@@ -582,14 +588,12 @@ export const VendorsPage: React.FC = () => {
                         {b.batch_number} — {b.raw_material?.name} ({b.quantity} {b.unit})
                       </option>
                     ))}
-                  {batches
-                    .filter((b) => b.vendor_id !== selectedVendorForEmail.id)
-                    .map((b) => (
-                      <option key={b.id} value={b.id}>
-                        [Other Lot] {b.batch_number} — {b.raw_material?.name}
-                      </option>
-                    ))}
                 </select>
+                {!batches.some((b) => b.vendor_id === selectedVendorForEmail.id) && (
+                  <span className="text-[11px] text-amber-700 mt-1 block">
+                    This supplier has no associated batch. Create a batch before sending a document request.
+                  </span>
+                )}
               </div>
 
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-700 space-y-1">

@@ -6,8 +6,8 @@ import { useAuth } from '../context/AuthContext';
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const [username, setUsername] = useState('admin@vendoriq.com');
-  const [password, setPassword] = useState('Password123!');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -95,18 +95,6 @@ export const LoginPage: React.FC = () => {
               </button>
             </div>
           </form>
-
-          {/* Quick Demo Login Preset Helper */}
-          <div className="mt-6 pt-5 border-t border-slate-100">
-            <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider mb-2">
-              Demo Credentials:
-            </div>
-            <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 font-mono text-xs text-slate-700 flex justify-between items-center">
-              <span>admin@vendoriq.com</span>
-              <span className="text-slate-400">/</span>
-              <span>Password123!</span>
-            </div>
-          </div>
 
           <div className="mt-4 text-center">
             <p className="text-xs text-slate-500">

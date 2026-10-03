@@ -2,10 +2,10 @@
 Batch Pydantic schemas.
 Follows VendorIQ PRD Section 11 & 16, unified with Developer 2 & Developer 3 workflows.
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from uuid import UUID
 from datetime import date, datetime
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BatchCreate(BaseModel):
@@ -57,7 +57,10 @@ class BatchResponse(BaseModel):
 
     # Unified pipeline fields
     vendor_name: Optional[str] = None
+    vendor_email: Optional[str] = None
+    vendor_code: Optional[str] = None
     raw_material_name: Optional[str] = None
+    material_required_purity: Optional[float] = None
     risk_score: Optional[float] = None
     risk_level: Optional[str] = None
     processed: Optional[bool] = False
@@ -86,6 +89,18 @@ class BatchListResponse(BaseModel):
 class BatchDecisionRequest(BaseModel):
     company_id: Optional[str] = None
     company_thresholds: Dict[str, Any] = Field(default_factory=dict)
+    manual_override: bool = False
+    decision: Optional[Literal["APPROVED", "REJECTED", "NEEDS_REVIEW"]] = None
+    notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_manual_override(self) -> "BatchDecisionRequest":
+        if self.manual_override:
+            if not self.decision:
+                raise ValueError("A decision is required for a manual override.")
+            if not self.notes or not self.notes.strip():
+                raise ValueError("An audit justification is required for a manual override.")
+        return self
 
 
 class BatchDecisionResponse(BaseModel):

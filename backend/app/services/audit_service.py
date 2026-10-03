@@ -22,6 +22,9 @@ def record_audit_event(
     )
     db.add(event)
     if commit:
-        db.commit()
-        db.refresh(event)
+        try:
+            db.commit()
+            db.refresh(event)
+        except Exception:
+            db.rollback()
     return event

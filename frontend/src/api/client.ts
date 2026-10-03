@@ -7,6 +7,7 @@ import {
   BatchDetail,
   DocumentRecord,
   MLPrediction,
+  RiskLevel,
   KimiIntelligence,
   DecisionRecord,
   DashboardAnalytics,
@@ -53,7 +54,185 @@ apiClient.interceptors.response.use(
 const unwrapList = <T>(data: any): T[] => {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.items)) return data.items;
-  return [];
+  throw new TypeError('The API returned an unexpected list response.');
+};
+
+const riskLevelFromScore = (score?: number): RiskLevel => {
+  if (score === undefined || score === null) return 'UNKNOWN';
+  if (score < 25) return 'LOW';
+  if (score < 50) return 'MEDIUM';
+  if (score < 75) return 'HIGH';
+  return 'CRITICAL';
+};
+
+const normalizeVendor = (source: any): Vendor => {
+  const score = source.risk_score ?? source.overall_risk_score;
+  const approvalRate = source.approval_rate;
+  const deliveryRate = source.delivery_reliability ?? source.on_time_delivery_rate;
+  return {
+    ...source,
+    name: source.name || source.vendor_name || '',
+    vendor_code: source.vendor_code || source.code || source.company_registration_id || '',
+    contact_email: source.contact_email || source.email || '',
+    risk_level: source.risk_level || riskLevelFromScore(score),
+    approval_rate: approvalRate == null ? undefined : approvalRate <= 1 ? approvalRate * 100 : approvalRate,
+    delivery_score: deliveryRate == null ? undefined : deliveryRate <= 1 ? deliveryRate * 100 : deliveryRate,
+    quality_score: source.quality_score ?? source.quality_consistency,
+    total_batches: source.total_batches ?? source.health?.total_batches ?? 0,
+    approved_batches: source.approved_batches ?? source.health?.approved_batches ?? 0,
+    rejected_batches: source.rejected_batches ?? source.health?.rejected_batches ?? 0,
+    kimi_assessment: source.kimi_assessment
+      ? {
+          ...source.kimi_assessment,
+          recommendations:
+            source.kimi_assessment.recommendations ||
+            source.kimi_assessment.recommended_actions ||
+            [],
+        }
+      : undefined,
+  } as Vendor;
+};
+
+const normalizeMaterial = (source: any): RawMaterial => ({
+  ...source,
+  material_code: source.material_code || source.code || '',
+  required_purity: source.required_purity ?? source.purity_min,
+  specifications: source.specifications || source.specification || {},
+});
+
+const normalizeDocument = (source: any): DocumentRecord => ({
+  ...source,
+  filename: source.filename || source.file_name || '',
+  original_filename: source.original_filename || source.file_name || source.filename || '',
+  extraction_status: source.extraction_status || source.processing_status || source.status,
+  created_at: source.created_at || source.uploaded_at || source.upload_date || '',
+});
+
+const normalizeBatch = (source: any): Batch => {
+  const decision = source.decision || source.final_decision?.decision;
+  const score = source.risk_score ?? source.risk_prediction?.risk_score;
+  return {
+    ...source,
+    price_per_unit: source.price_per_unit ?? source.price,
+    decision,
+    decision_status: decision,
+    risk_score: score,
+    risk_probability: source.risk_probability ?? source.risk_prediction?.risk_probability,
+    risk_level: source.risk_level || source.risk_prediction?.risk_level || riskLevelFromScore(score),
+    processed: source.processed ?? Boolean(source.risk_prediction || source.quality_checks?.all_checks?.length),
+    vendor:
+      source.vendor ||
+      (source.vendor_name
+        ? {
+            id: source.vendor_id,
+            name: source.vendor_name,
+            vendor_code: source.vendor_code,
+            contact_email: source.vendor_email,
+          }
+        : undefined),
+    raw_material:
+      source.raw_material ||
+      (source.raw_material_name
+        ? {
+            id: source.raw_material_id,
+            name: source.raw_material_name,
+            required_purity:
+              source.material_required_purity ??
+              source.quality_checks?.specification?.purity_min,
+          }
+        : undefined),
+  } as Batch;
+};
+
+const normalizeBatchDetail = (source: any): BatchDetail => {
+  const batch = normalizeBatch(source);
+  const checks = source.quality_checks?.all_checks || [];
+  const kimi = source.kimi_analysis;
+  const emailEvent = source.email_event;
+  const finalDecision = source.final_decision;
+  const riskPrediction = source.risk_prediction;
+  const decisionAudit = (source.audit_timeline || []).find(
+    (event: any) => event.event_type === 'Decision Made'
+  );
+  const historical = source.historical_comparison || {};
+  return {
+    ...batch,
+    documents: (source.documents || []).map(normalizeDocument),
+    validation_results: {
+      is_valid: checks.length > 0 && checks.every((check: any) => check.status === 'PASS'),
+      checks: checks.map((check: any) => ({
+        name: check.name || 'Validation check',
+        category: (check.name || 'validation').split('_')[0],
+        required: check.expected ?? 'Configured requirement',
+        actual: check.actual ?? 'Not provided',
+        status:
+          check.status === 'PASS'
+            ? 'PASSED'
+            : check.status === 'FAIL'
+              ? 'FAILED'
+              : check.status === 'NEEDS_REVIEW' || check.status === 'MISSING'
+                ? 'WARNING'
+                : 'PENDING',
+        notes: check.reason,
+      })),
+    },
+    prediction: riskPrediction
+      ? {
+          ...riskPrediction,
+          batch_id: String(source.id),
+        }
+      : undefined,
+    historical_comparison: {
+      previous_batches_count: historical.previous_batches,
+      approved_count: historical.approved_count,
+      rejected_count: historical.rejected_count,
+      vendor_average_purity: historical.average_purity,
+      on_time_rate:
+        historical.delivery_reliability == null
+          ? undefined
+          : historical.delivery_reliability <= 1
+            ? historical.delivery_reliability * 100
+            : historical.delivery_reliability,
+      variance:
+        historical.purity_variance == null
+          ? undefined
+          : `${historical.purity_variance > 0 ? '+' : ''}${historical.purity_variance}%`,
+    },
+    kimi_intelligence: kimi
+      ? {
+          ...kimi,
+          business_impact: Array.isArray(kimi.business_impact)
+            ? kimi.business_impact.join(' ')
+            : kimi.business_impact,
+        }
+      : undefined,
+    decision_record: finalDecision
+      ? {
+          ...finalDecision,
+          batch_id: String(source.id),
+          decision_status: finalDecision.decision,
+          reasons: finalDecision.reason ? [finalDecision.reason] : [],
+          manual_override: Boolean(decisionAudit?.details?.manual_override),
+          override_notes: decisionAudit?.details?.override_notes,
+          email_status: emailEvent?.status || source.email_status || 'NOT_APPLICABLE',
+          email_sent_at: emailEvent?.sent_at,
+          email_recipient: emailEvent?.recipient_email,
+          email_subject: emailEvent?.subject,
+          retry_count: 0,
+          last_error: emailEvent?.error_message,
+        }
+      : undefined,
+    email_event: emailEvent,
+    email_status: emailEvent?.status || source.email_status || 'NOT_APPLICABLE',
+    timeline: (source.audit_timeline || []).map((event: any, index: number) => ({
+      id: event.id || `${event.event_type}-${index}`,
+      step: event.event_type,
+      label: event.event_type,
+      status: 'COMPLETED',
+      timestamp: event.timestamp,
+      details: event.details,
+    })),
+  } as BatchDetail;
 };
 
 // ==================== AUTH APIS ====================
@@ -71,7 +250,12 @@ export const authApi = {
 
   getMe: async (): Promise<User> => {
     const response = await apiClient.get('/api/auth/me');
-    return response.data;
+    const payload = response.data?.user || response.data;
+    return {
+      ...payload,
+      company_id: payload.company_id || response.data?.company?.id,
+      company_name: payload.company_name || response.data?.company?.name,
+    };
   },
 };
 
@@ -79,22 +263,40 @@ export const authApi = {
 export const vendorApi = {
   getAll: async (params?: { search?: string; risk_level?: string; status?: string }): Promise<Vendor[]> => {
     const response = await apiClient.get('/api/vendors', { params });
-    return unwrapList<Vendor>(response.data);
+    return unwrapList<any>(response.data).map(normalizeVendor);
   },
 
   getById: async (id: string): Promise<Vendor> => {
     const response = await apiClient.get(`/api/vendors/${id}`);
-    return response.data;
+    return normalizeVendor(response.data);
   },
 
   create: async (vendorData: Partial<Vendor>): Promise<Vendor> => {
-    const response = await apiClient.post('/api/vendors', vendorData);
-    return response.data;
+    const response = await apiClient.post('/api/vendors', {
+      vendor_name: vendorData.name || (vendorData as any).vendor_name,
+      company_registration_id:
+        vendorData.vendor_code || (vendorData as any).company_registration_id,
+      contact_name: vendorData.contact_name,
+      email: vendorData.contact_email || (vendorData as any).email,
+      phone: vendorData.phone,
+      address: vendorData.address,
+      industry: (vendorData as any).industry,
+      status: vendorData.status,
+    });
+    return normalizeVendor(response.data);
   },
 
   update: async (id: string, vendorData: Partial<Vendor>): Promise<Vendor> => {
-    const response = await apiClient.put(`/api/vendors/${id}`, vendorData);
-    return response.data;
+    const response = await apiClient.put(`/api/vendors/${id}`, {
+      vendor_name: vendorData.name,
+      company_registration_id: vendorData.vendor_code,
+      contact_name: vendorData.contact_name,
+      email: vendorData.contact_email,
+      phone: vendorData.phone,
+      address: vendorData.address,
+      status: vendorData.status,
+    });
+    return normalizeVendor(response.data);
   },
 
   delete: async (id: string): Promise<void> => {
@@ -121,12 +323,16 @@ export const vendorApi = {
 export const rawMaterialApi = {
   getAll: async (): Promise<RawMaterial[]> => {
     const response = await apiClient.get('/api/raw-materials');
-    return unwrapList<RawMaterial>(response.data);
+    return unwrapList<any>(response.data).map(normalizeMaterial);
   },
 
   create: async (materialData: Partial<RawMaterial>): Promise<RawMaterial> => {
-    const response = await apiClient.post('/api/raw-materials', materialData);
-    return response.data;
+    const response = await apiClient.post('/api/raw-materials', {
+      ...materialData,
+      code: materialData.material_code || (materialData as any).code,
+      purity_min: materialData.required_purity ?? (materialData as any).purity_min,
+    });
+    return normalizeMaterial(response.data);
   },
 };
 
@@ -134,12 +340,12 @@ export const rawMaterialApi = {
 export const batchApi = {
   getAll: async (params?: { vendor_id?: string; status?: string; search?: string }): Promise<Batch[]> => {
     const response = await apiClient.get('/api/batches', { params });
-    return unwrapList<Batch>(response.data);
+    return unwrapList<any>(response.data).map(normalizeBatch);
   },
 
   getById: async (id: string): Promise<BatchDetail> => {
     const response = await apiClient.get(`/api/batches/${id}`);
-    return response.data;
+    return normalizeBatchDetail(response.data);
   },
 
   create: async (batchData: {
@@ -152,8 +358,11 @@ export const batchApi = {
     manufacturing_date?: string;
     expiry_date?: string;
   }): Promise<Batch> => {
-    const response = await apiClient.post('/api/batches', batchData);
-    return response.data;
+    const response = await apiClient.post('/api/batches', {
+      ...batchData,
+      price: batchData.price_per_unit,
+    });
+    return normalizeBatch(response.data);
   },
 
   // Developer 2 workflow: Process documents & run validation
@@ -169,7 +378,15 @@ export const batchApi = {
   },
 
   // Developer 3 workflow: Decision Engine & SMTP Email
-  makeDecision: async (id: string, options?: { manual_override?: boolean; decision?: string; notes?: string }): Promise<DecisionRecord> => {
+  makeDecision: async (
+    id: string,
+    options?: {
+      manual_override?: boolean;
+      decision?: string;
+      notes?: string;
+      company_thresholds?: Record<string, unknown>;
+    }
+  ): Promise<DecisionRecord> => {
     const response = await apiClient.post(`/api/batches/${id}/decision`, options || {});
     return response.data;
   },
@@ -178,11 +395,14 @@ export const batchApi = {
   uploadDocument: async (batchId: string, file: File, documentType: string): Promise<DocumentRecord> => {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('document_type', documentType);
-    const response = await apiClient.post(`/api/batches/${batchId}/upload-document`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response.data;
+    const response = await apiClient.post(
+      `/api/batches/${batchId}/upload-document`,
+      formData,
+      {
+        params: { document_type: documentType },
+      }
+    );
+    return normalizeDocument(response.data);
   },
 
   // Request batch PDF documents (COA/SDS/GMP) from vendor via Google SMTP
@@ -198,24 +418,25 @@ export const batchApi = {
 export const documentApi = {
   getAll: async (params?: { batch_id?: string; vendor_id?: string }): Promise<DocumentRecord[]> => {
     const response = await apiClient.get('/api/documents', { params });
-    return unwrapList<DocumentRecord>(response.data);
+    return unwrapList<any>(response.data).map(normalizeDocument);
   },
 
   upload: async (file: File, meta: { document_type: string; batch_id?: string; vendor_id?: string }): Promise<DocumentRecord> => {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('document_type', meta.document_type);
-    if (meta.batch_id) formData.append('batch_id', meta.batch_id);
-    if (meta.vendor_id) formData.append('vendor_id', meta.vendor_id);
-    const response = await apiClient.post('/api/documents/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+    const response = await apiClient.post('/api/documents', formData, {
+      params: {
+        document_type: meta.document_type,
+        batch_id: meta.batch_id,
+        vendor_id: meta.vendor_id,
+      },
     });
-    return response.data;
+    return normalizeDocument(response.data);
   },
 
   getById: async (id: string): Promise<DocumentRecord> => {
     const response = await apiClient.get(`/api/documents/${id}`);
-    return response.data;
+    return normalizeDocument(response.data);
   },
 
   delete: async (id: string): Promise<void> => {
@@ -227,7 +448,13 @@ export const documentApi = {
 export const predictionApi = {
   getAll: async (): Promise<MLPrediction[]> => {
     const response = await apiClient.get('/api/predictions');
-    return unwrapList<MLPrediction>(response.data);
+    return unwrapList<any>(response.data).map((item) => ({
+      ...item,
+      batch_id: item.batch_id,
+      batch_status: item.batch_status || 'UNKNOWN',
+      risk_factors: item.risk_factors || [],
+      top_risk_factors: item.risk_factors || [],
+    }));
   },
 
   predictBatch: async (batchId: string): Promise<MLPrediction> => {
@@ -240,26 +467,19 @@ export const predictionApi = {
 export const analyticsApi = {
   getDashboardAnalytics: async (): Promise<DashboardAnalytics> => {
     const response = await apiClient.get('/api/analytics');
-    const data = response.data || {};
+    const data = response.data;
 
     const kpis = data.kpis || {};
     const charts = data.charts || {};
     const tables = data.tables || {};
 
-    const vendor_risk_distribution = charts.vendor_risk_distribution || data.vendor_risk_distribution || [
-      { name: 'Low Risk (<25)', value: 1, color: '#10b981' },
-      { name: 'Medium Risk (25-50)', value: 0, color: '#3b82f6' },
-      { name: 'High Risk (50-75)', value: 0, color: '#f59e0b' },
-      { name: 'Critical Risk (>75)', value: 0, color: '#ef4444' },
-    ];
+    const vendor_risk_distribution =
+      charts.vendor_risk_distribution || data.vendor_risk_distribution || [];
 
     const rawRiskTrend = charts.risk_trend || data.risk_trend || [];
     const risk_trend = rawRiskTrend.map((item: any) => ({
       date: item.date || item.period || '',
-      avg_risk: item.avg_risk ?? item.average_risk ?? 0,
-      low: item.low ?? 0,
-      medium: item.medium ?? 0,
-      high: item.high ?? item.high_risk_count ?? 0,
+      avg_risk: item.avg_risk ?? item.average_risk ?? null,
     }));
 
     const rawApprovalTrend = charts.batch_approval_trend || data.batch_approval_trend || [];
@@ -273,20 +493,13 @@ export const analyticsApi = {
     const rawQualityTrend = charts.quality_trend || data.quality_trend || [];
     const quality_trend = rawQualityTrend.map((item: any) => ({
       month: item.month || item.period || '',
-      average_purity: item.average_purity ?? item.avg_purity ?? 99.0,
-      compliance_rate: item.compliance_rate ?? 98.0,
+      average_purity: item.average_purity ?? item.avg_purity ?? null,
+      compliance_rate: item.compliance_rate ?? null,
     }));
 
-    const high_risk_vendors_list = (tables.high_risk_vendors || data.high_risk_vendors_list || []).map((v: any) => ({
-      ...v,
-      name: v.name || v.vendor_name || 'Vendor',
-      vendor_code: v.vendor_code || v.code || 'VND-001',
-    }));
+    const high_risk_vendors_list = (tables.high_risk_vendors || data.high_risk_vendors_list || []).map(normalizeVendor);
 
-    const recent_batches_list = (tables.recent_batch_assessments || data.recent_batches_list || []).map((b: any) => ({
-      ...b,
-      vendor: b.vendor || { name: b.vendor_name || 'Vendor' },
-    }));
+    const recent_batches_list = (tables.recent_batch_assessments || data.recent_batches_list || []).map(normalizeBatch);
 
     return {
       total_vendors: kpis.total_vendors ?? data.total_vendors ?? 0,
@@ -324,8 +537,8 @@ export const emailApi = {
     return unwrapList<any>(response.data);
   },
 
-  retryEmail: async (batchId: string): Promise<{ success: boolean; message: string }> => {
-    const response = await apiClient.post(`/api/email-events/retry/${batchId}`);
+  retryEmail: async (eventId: string): Promise<{ id: string; status: string; error_message?: string }> => {
+    const response = await apiClient.post(`/api/email-events/${eventId}/retry`);
     return response.data;
   },
 };
@@ -362,4 +575,3 @@ export const settingsApi = {
     return response.data;
   },
 };
-

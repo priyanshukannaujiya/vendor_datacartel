@@ -3,17 +3,17 @@ Analytics and Dashboard router for VendorIQ.
 Aggregates live database statistics for KPI cards, risk distribution, trends, and risk tables.
 All numbers come directly from live database tables.
 """
-from typing import Dict, Any, List
+from collections import defaultdict
+from datetime import date
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc
 
 from app.core.database import get_db
 from app.models.vendor import Vendor
 from app.models.batch import Batch
-from app.models.raw_material import RawMaterial
 from app.models.intelligence import BatchIntelligence
-from app.models.decision import BatchDecision, EmailEvent
+from app.models.decision import EmailEvent
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
@@ -28,8 +28,6 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
     # 1. KPI Counts
     total_vendors = db.query(Vendor).filter(Vendor.deleted_at.is_(None)).count()
     all_batches = db.query(Batch).all()
-    total_batches = len(all_batches)
-
     batches_processed = sum(
         1 for b in all_batches
         if b.status in ["APPROVED", "REJECTED", "NEEDS_REVIEW", "PROCESSING", "VALIDATED", "PREDICTED"]
@@ -42,66 +40,114 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
     )
 
     vendors = db.query(Vendor).filter(Vendor.deleted_at.is_(None)).all()
-    high_risk_vendors = sum(1 for v in vendors if (v.risk_score or 0) >= 50.0)
+    scored_vendor_rows = (
+        db.query(Batch.vendor_id, BatchIntelligence.ml_prediction)
+        .join(BatchIntelligence, BatchIntelligence.batch_id == Batch.id)
+        .filter(BatchIntelligence.ml_prediction.isnot(None))
+        .order_by(desc(BatchIntelligence.created_at))
+        .all()
+    )
+    vendor_risk_scores = {}
+    for vendor_id, prediction in scored_vendor_rows:
+        if vendor_id not in vendor_risk_scores and prediction and prediction.get("risk_score") is not None:
+            vendor_risk_scores[vendor_id] = float(prediction["risk_score"])
+    high_risk_vendors = sum(1 for score in vendor_risk_scores.values() if score >= 50.0)
 
     # 2. Vendor Risk Distribution
-    risk_low = sum(1 for v in vendors if (v.risk_score or 0) < 25.0)
-    risk_medium = sum(1 for v in vendors if 25.0 <= (v.risk_score or 0) < 50.0)
-    risk_high = sum(1 for v in vendors if 50.0 <= (v.risk_score or 0) < 75.0)
-    risk_critical = sum(1 for v in vendors if (v.risk_score or 0) >= 75.0)
+    scores = list(vendor_risk_scores.values())
+    risk_low = sum(1 for score in scores if score < 25.0)
+    risk_medium = sum(1 for score in scores if 25.0 <= score < 50.0)
+    risk_high = sum(1 for score in scores if 50.0 <= score < 75.0)
+    risk_critical = sum(1 for score in scores if score >= 75.0)
 
     risk_distribution = [
-        {"name": "Low Risk (<25)", "value": max(1, risk_low), "color": "#10b981"},
-        {"name": "Medium Risk (25-50)", "value": max(0, risk_medium), "color": "#3b82f6"},
-        {"name": "High Risk (50-75)", "value": max(0, risk_high), "color": "#f59e0b"},
-        {"name": "Critical Risk (>75)", "value": max(0, risk_critical), "color": "#ef4444"},
+        {"name": "Low Risk (<25)", "value": risk_low, "color": "#10b981"},
+        {"name": "Medium Risk (25-50)", "value": risk_medium, "color": "#3b82f6"},
+        {"name": "High Risk (50-75)", "value": risk_high, "color": "#f59e0b"},
+        {"name": "Critical Risk (>75)", "value": risk_critical, "color": "#ef4444"},
     ]
 
-    # 3. Trends
-    # Risk Trend
-    risk_trend = [
-        {"period": "Oct 2025", "average_risk": 22.4, "high_risk_count": 1},
-        {"period": "Nov 2025", "average_risk": 20.1, "high_risk_count": 1},
-        {"period": "Dec 2025", "average_risk": 19.5, "high_risk_count": 0},
-        {"period": "Jan 2026", "average_risk": 24.8, "high_risk_count": 2},
-        {"period": "Feb 2026", "average_risk": 21.0, "high_risk_count": 1},
-        {"period": "Mar 2026", "average_risk": 18.6, "high_risk_count": high_risk_vendors},
-    ]
+    # Trends are derived from stored batches and their persisted intelligence records.
+    today = date.today()
+    months = []
+    year, month = today.year, today.month
+    for _ in range(5):
+        month -= 1
+        if month == 0:
+            year -= 1
+            month = 12
+    for _ in range(6):
+        months.append((year, month))
+        month += 1
+        if month == 13:
+            year += 1
+            month = 1
 
-    # Batch Approval Trend
-    batch_approval_trend = [
-        {"period": "Oct 2025", "approved": 18, "rejected": 1, "needs_review": 2},
-        {"period": "Nov 2025", "approved": 24, "rejected": 2, "needs_review": 3},
-        {"period": "Dec 2025", "approved": 21, "rejected": 0, "needs_review": 1},
-        {"period": "Jan 2026", "approved": 28, "rejected": 3, "needs_review": 4},
-        {"period": "Feb 2026", "approved": 32, "rejected": 2, "needs_review": 3},
-        {"period": "Mar 2026", "approved": max(approved_batches, 19), "rejected": max(rejected_batches, 1), "needs_review": max(pending_reviews, 2)},
-    ]
+    batch_by_month = defaultdict(list)
+    for batch in all_batches:
+        if batch.created_at:
+            batch_by_month[(batch.created_at.year, batch.created_at.month)].append(batch)
 
-    # Quality Trend
-    quality_trend = [
-        {"period": "Oct 2025", "average_purity": 99.1, "compliance_rate": 96.0},
-        {"period": "Nov 2025", "average_purity": 99.2, "compliance_rate": 97.2},
-        {"period": "Dec 2025", "average_purity": 99.4, "compliance_rate": 98.5},
-        {"period": "Jan 2026", "average_purity": 99.0, "compliance_rate": 95.8},
-        {"period": "Feb 2026", "average_purity": 99.3, "compliance_rate": 97.9},
-        {"period": "Mar 2026", "average_purity": 99.35, "compliance_rate": 98.2},
-    ]
+    intelligence_by_batch = {
+        row.batch_id: row
+        for row in db.query(BatchIntelligence).filter(
+            BatchIntelligence.batch_id.in_([batch.id for batch in all_batches])
+        ).all()
+    } if all_batches else {}
+
+    risk_trend = []
+    batch_approval_trend = []
+    quality_trend = []
+    for month_key in months:
+        month_batches = batch_by_month[month_key]
+        month_scores = []
+        month_purities = []
+        month_compliance = []
+        for batch in month_batches:
+            intelligence = intelligence_by_batch.get(batch.id)
+            prediction = intelligence.ml_prediction if intelligence and intelligence.ml_prediction else {}
+            if prediction.get("risk_score") is not None:
+                month_scores.append(float(prediction["risk_score"]))
+            if batch.purity_reported is not None:
+                month_purities.append(float(batch.purity_reported))
+            validation = intelligence.validation_result if intelligence and intelligence.validation_result else {}
+            overall_status = validation.get("overall_status")
+            if overall_status in {"PASS", "FAIL", "NEEDS_REVIEW"}:
+                month_compliance.append(overall_status == "PASS")
+
+        label = date(month_key[0], month_key[1], 1).strftime("%b %Y")
+        risk_trend.append({
+            "period": label,
+            "average_risk": round(sum(month_scores) / len(month_scores), 2) if month_scores else None,
+            "high_risk_count": sum(1 for score in month_scores if score >= 50),
+        })
+        batch_approval_trend.append({
+            "period": label,
+            "approved": sum(1 for batch in month_batches if batch.status == "APPROVED"),
+            "rejected": sum(1 for batch in month_batches if batch.status == "REJECTED"),
+            "needs_review": sum(1 for batch in month_batches if batch.status == "NEEDS_REVIEW"),
+        })
+        quality_trend.append({
+            "period": label,
+            "average_purity": round(sum(month_purities) / len(month_purities), 3) if month_purities else None,
+            "compliance_rate": round(sum(month_compliance) / len(month_compliance) * 100, 2) if month_compliance else None,
+        })
 
     # 4. Tables
     # High Risk Vendors Table
     high_risk_vendors_table = []
-    for v in sorted(vendors, key=lambda x: (x.risk_score or 0), reverse=True):
-        if (v.risk_score or 0) >= 30.0 or len(high_risk_vendors_table) < 5:
+    for v in sorted(vendors, key=lambda x: vendor_risk_scores.get(x.id, -1), reverse=True):
+        risk_score = vendor_risk_scores.get(v.id)
+        if risk_score is not None and risk_score >= 30.0:
             high_risk_vendors_table.append({
                 "id": str(v.id),
                 "vendor_name": v.vendor_name,
-                "industry": v.industry or "Cosmetics & Skincare",
-                "risk_score": v.risk_score or 15.0,
-                "approval_rate": round((v.approval_rate or 0.95) * 100, 1),
-                "quality_score": v.quality_score or 98.0,
-                "delivery_reliability": round((v.delivery_reliability or 0.95) * 100, 1),
-                "status": v.status or "ACTIVE",
+                "industry": v.industry,
+                "risk_score": risk_score,
+                "approval_rate": round(v.approval_rate * 100, 1) if v.approval_rate is not None else None,
+                "quality_score": v.quality_score,
+                "delivery_reliability": round(v.delivery_reliability * 100, 1) if v.delivery_reliability is not None else None,
+                "status": v.status,
             })
 
     # Recent Batch Assessments Table
@@ -119,11 +165,8 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
         email = db.query(EmailEvent).filter(EmailEvent.batch_id == b.id).order_by(desc(EmailEvent.created_at)).first()
 
         risk_sc = pred.get("risk_score")
-        if risk_sc is None:
-            risk_sc = 12.5 if b.status == "APPROVED" else (78.0 if b.status == "REJECTED" else 35.0)
-
         risk_lv = pred.get("risk_level")
-        if not risk_lv:
+        if not risk_lv and risk_sc is not None:
             risk_lv = "LOW" if risk_sc < 25 else ("MEDIUM" if risk_sc < 50 else ("HIGH" if risk_sc < 75 else "CRITICAL"))
 
         recent_batches_table.append({
@@ -131,12 +174,12 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
             "batch_number": b.batch_number,
             "vendor_name": b.vendor.vendor_name if b.vendor else "Unknown Vendor",
             "raw_material_name": b.raw_material.name if b.raw_material else "Unknown Material",
-            "quantity": b.quantity or 1000.0,
-            "unit": b.unit or "kg",
+            "quantity": b.quantity,
+            "unit": b.unit,
             "status": b.status,
             "risk_score": risk_sc,
             "risk_level": risk_lv,
-            "email_status": email.status if email else ("SENT" if b.status in ["APPROVED", "REJECTED"] else "PENDING"),
+            "email_status": email.status if email else None,
             "created_at": b.created_at.isoformat() if b.created_at else None,
         })
 

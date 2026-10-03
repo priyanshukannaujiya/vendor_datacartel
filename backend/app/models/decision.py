@@ -64,7 +64,7 @@ class EmailEvent(Base):
     batch_id = Column(
         PG_UUID(as_uuid=True),
         ForeignKey("batches.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     decision_id = Column(

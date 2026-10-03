@@ -80,8 +80,11 @@ def _enrich_batch_response(batch: Batch, db: Session) -> BatchResponse:
     resp = BatchResponse.model_validate(batch)
     if batch.vendor:
         resp.vendor_name = batch.vendor.vendor_name
+        resp.vendor_email = batch.vendor.email
+        resp.vendor_code = batch.vendor.code
     if batch.raw_material:
         resp.raw_material_name = batch.raw_material.name
+        resp.material_required_purity = batch.raw_material.purity_min
 
     # Check intelligence and decisions
     intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
@@ -268,71 +271,45 @@ def get_batch_detail(
 
     quality_checks = {
         "specification": {
-            "name": material.name if material else "Material Specification",
-            "purity_min": material.purity_min if material else 99.0,
-            "moisture_max": material.moisture_max if material else 1.0,
-            "heavy_metals_max_ppm": material.heavy_metals_max_ppm if material else 10.0,
-            "microbial_limit_cfu_g": material.microbial_limit_cfu_g if material else 100.0,
-            "storage_conditions": material.storage_conditions if material else "Standard warehouse",
+            "name": material.name if material else None,
+            "purity_min": material.purity_min if material else None,
+            "moisture_max": material.moisture_max if material else None,
+            "heavy_metals_max_ppm": material.heavy_metals_max_ppm if material else None,
+            "microbial_limit_cfu_g": material.microbial_limit_cfu_g if material else None,
+            "storage_conditions": material.storage_conditions if material else None,
         },
-        "coa": next((c for c in checks_list if c.get("name") == "purity"), {"status": "PASS" if batch.status == "APPROVED" else "NEEDS_REVIEW", "actual": batch.purity_reported or 99.3, "expected": ">= 99.0%"}),
-        "sds": next((c for c in checks_list if "sds" in c.get("name", "")), {"status": "PASS", "actual": "Present & verified", "expected": "Present"}),
-        "gmp": next((c for c in checks_list if "gmp" in c.get("name", "")), {"status": "PASS" if (vendor and vendor.certification_status == "GMP_CERTIFIED") else "NEEDS_REVIEW", "actual": vendor.certification_status if vendor else "VERIFIED", "expected": "GMP_CERTIFIED"}),
-        "testing": next((c for c in checks_list if c.get("name") == "moisture"), {"status": "PASS", "actual": 0.28, "expected": "<= 1.0%"}),
-        "contaminants": next((c for c in checks_list if c.get("name") == "heavy_metals"), {"status": "PASS", "actual": "< 5 ppm", "expected": "<= 10 ppm"}),
         "all_checks": checks_list,
     }
 
     # Historical Comparison
     v_hist = intelligence.vendor_history if intelligence and intelligence.vendor_history else {}
+    prior_batches = (
+        db.query(Batch)
+        .filter(Batch.vendor_id == batch.vendor_id, Batch.id != batch.id)
+        .all()
+    )
+    prior_purities = [float(item.purity_reported) for item in prior_batches if item.purity_reported is not None]
+    approved_prior = sum(1 for item in prior_batches if item.status == "APPROVED")
+    rejected_prior = sum(1 for item in prior_batches if item.status == "REJECTED")
     historical_comparison = {
-        "previous_batches": v_hist.get("previous_batches", vendor.total_batches if hasattr(vendor, "total_batches") else 20),
-        "approval_rate": v_hist.get("approval_rate", vendor.approval_rate if vendor else 0.95),
-        "delivery_reliability": v_hist.get("delivery_reliability", vendor.delivery_reliability if vendor else 0.97),
-        "average_purity": v_hist.get("average_purity", 99.2),
-        "purity_variance": v_hist.get("purity_variance", 0.04),
-        "comparison_notes": v_hist.get("comparison_notes", {"status": "Consistent with historical quality distribution"}),
+        "previous_batches": len(prior_batches),
+        "approved_count": approved_prior,
+        "rejected_count": rejected_prior,
+        "approval_rate": approved_prior / len(prior_batches) if prior_batches else None,
+        "delivery_reliability": v_hist.get("delivery_reliability"),
+        "average_purity": sum(prior_purities) / len(prior_purities) if prior_purities else None,
+        "purity_variance": (
+            batch.purity_reported - (sum(prior_purities) / len(prior_purities))
+            if batch.purity_reported is not None and prior_purities
+            else None
+        ),
     }
 
     # ML Risk Prediction
     risk_prediction = intelligence.ml_prediction if intelligence and intelligence.ml_prediction else None
-    if not risk_prediction and batch.status in ["APPROVED", "REJECTED", "NEEDS_REVIEW"]:
-        is_low = batch.status == "APPROVED"
-        risk_prediction = {
-            "risk_score": 12.5 if is_low else 78.4,
-            "risk_probability": 0.12 if is_low else 0.78,
-            "risk_level": "LOW" if is_low else "HIGH",
-            "risk_factors": [] if is_low else ["Purity below specification limit", "Historical rejection rate elevated"],
-        }
 
     # Kimi K3 Analysis
     kimi_analysis = intelligence.kimi_analysis if intelligence and intelligence.kimi_analysis else None
-    if not kimi_analysis and batch.status in ["APPROVED", "REJECTED", "NEEDS_REVIEW"]:
-        is_approved = batch.status == "APPROVED"
-        kimi_analysis = {
-            "summary": (
-                f"Batch {batch.batch_number} meets all physical-chemical specifications with high purity ({batch.purity_reported or 99.3}%) and strong historical compliance."
-                if is_approved
-                else f"Batch {batch.batch_number} exhibits quality discrepancies with purity ({batch.purity_reported or 98.2}%) failing required thresholds."
-            ),
-            "key_findings": [
-                f"COA purity tested at {batch.purity_reported or (99.3 if is_approved else 98.2)}% vs requirement >= {material.purity_min if material else 99.0}%.",
-                f"Traceability confirmed for lot {batch.batch_number}.",
-                f"Supplier {vendor.vendor_name if vendor else 'Vendor'} is {vendor.certification_status if vendor else 'GMP certified'}.",
-            ],
-            "risk_factors": [] if is_approved else ["Material assay purity failure", "Supplier quality consistency deviation"],
-            "business_impact": (
-                ["Safe for immediate release into cosmetic formulation production line."]
-                if is_approved
-                else ["High risk of product instability or batch quarantine if released."]
-            ),
-            "recommended_actions": (
-                ["Issue formal batch release certification.", "Archive supplier analytical dossier."]
-                if is_approved
-                else ["Quarantine physical shipment immediately.", "Request formal CAPA and re-test from supplier."]
-            ),
-            "kimi_status": "SUCCESS",
-        }
 
     # Final Decision
     final_decision = None
@@ -347,16 +324,6 @@ def get_batch_detail(
             "recommended_actions": d.recommended_actions,
             "created_at": d.created_at.isoformat() if d.created_at else None,
         }
-    elif batch.status in ["APPROVED", "REJECTED", "NEEDS_REVIEW"]:
-        final_decision = {
-            "decision": batch.status,
-            "risk_score": risk_prediction.get("risk_score", 15.0) if risk_prediction else 15.0,
-            "risk_level": risk_prediction.get("risk_level", "LOW") if risk_prediction else "LOW",
-            "reason": "Specification criteria met and quality documentation validated." if batch.status == "APPROVED" else "Quality specification non-conformance.",
-            "recommended_actions": ["Proceed with receiving"] if batch.status == "APPROVED" else ["Quarantine batch"],
-            "created_at": batch.updated_at.isoformat() if batch.updated_at else None,
-        }
-
     # Email Event
     email_event = None
     if emails:
@@ -383,48 +350,6 @@ def get_batch_detail(
                 "timestamp": ev.created_at.isoformat() if ev.created_at else None,
                 "details": ev.details,
             })
-    else:
-        # Generate standard audit timeline based on current status
-        t_base = batch.created_at or datetime.now(timezone.utc)
-        audit_timeline.append({
-            "event_type": "Email Received",
-            "timestamp": t_base.isoformat(),
-            "details": {"source": "Vendor shipment notice"},
-        })
-        if intelligence or batch.status != "RECEIVED":
-            audit_timeline.append({
-                "event_type": "Documents Processed",
-                "timestamp": t_base.isoformat(),
-                "details": {"documents_count": len(docs) or 3},
-            })
-            audit_timeline.append({
-                "event_type": "Validation Completed",
-                "timestamp": t_base.isoformat(),
-                "details": {"status": "PASS" if batch.status == "APPROVED" else "FAIL"},
-            })
-            audit_timeline.append({
-                "event_type": "Risk Predicted",
-                "timestamp": t_base.isoformat(),
-                "details": {"risk_level": risk_prediction.get("risk_level", "LOW") if risk_prediction else "LOW"},
-            })
-            audit_timeline.append({
-                "event_type": "Kimi Assessment Generated",
-                "timestamp": t_base.isoformat(),
-                "details": {"status": "SUCCESS"},
-            })
-        if final_decision:
-            audit_timeline.append({
-                "event_type": "Decision Made",
-                "timestamp": (batch.updated_at or t_base).isoformat(),
-                "details": {"decision": final_decision["decision"]},
-            })
-        if email_event or batch.status in ["APPROVED", "REJECTED", "NEEDS_REVIEW"]:
-            audit_timeline.append({
-                "event_type": "Email Sent",
-                "timestamp": (batch.updated_at or t_base).isoformat(),
-                "details": {"recipient": vendor.email if vendor else "vendor@example.com", "status": email_event.get("status") if email_event else "SENT"},
-            })
-
     # Documents List
     documents_list = [
         {
@@ -533,8 +458,8 @@ def process_batch(
         intel = BatchIntelligence(batch_id=batch.id)
         db.add(intel)
 
-    intel.validation_result = validation_res.model_dump()
-    intel.vendor_history = vendor_hist.model_dump()
+    intel.validation_result = validation_res.model_dump(mode="json")
+    intel.vendor_history = vendor_hist.model_dump(mode="json")
 
     batch.status = "PROCESSING"
 
@@ -641,8 +566,8 @@ def predict_batch_risk(
         db.add(intel)
 
     intel.ml_features = features_used
-    intel.ml_prediction = prediction_result.model_dump()
-    intel.kimi_analysis = kimi_analysis.model_dump()
+    intel.ml_prediction = prediction_result.model_dump(mode="json")
+    intel.kimi_analysis = kimi_analysis.model_dump(mode="json")
     intel.kimi_status = kimi_analysis.kimi_status.value
 
     # Update vendor's current risk score
@@ -738,11 +663,11 @@ def create_batch_decision(
         if not intelligence:
             intelligence = BatchIntelligence(batch_id=batch.id)
             db.add(intelligence)
-        intelligence.validation_result = validation_res.model_dump()
-        intelligence.vendor_history = vendor_hist.model_dump()
+        intelligence.validation_result = validation_res.model_dump(mode="json")
+        intelligence.vendor_history = vendor_hist.model_dump(mode="json")
         intelligence.ml_features = feat
-        intelligence.ml_prediction = pred_res.model_dump()
-        intelligence.kimi_analysis = kimi_res.model_dump()
+        intelligence.ml_prediction = pred_res.model_dump(mode="json")
+        intelligence.kimi_analysis = kimi_res.model_dump(mode="json")
         intelligence.kimi_status = kimi_res.kimi_status.value
         db.commit()
         db.refresh(intelligence)
@@ -794,18 +719,26 @@ def create_batch_decision(
         company_thresholds=thresholds,
     )
 
+    decision_value = request.decision if request.manual_override else decision_res.decision
+    reason_value = (
+        f"Manual override: {request.notes.strip()}"
+        if request.manual_override and request.notes
+        else decision_res.reason
+    )
+    recommended_actions = [] if request.manual_override else decision_res.recommended_actions
+
     # Persist BatchDecision
     decision = BatchDecision(
         batch_id=batch.id,
         company_id=batch.company_id,
-        decision=decision_res.decision,
+        decision=decision_value,
         risk_score=float(risk_score),
         risk_level=risk_level,
-        reason=decision_res.reason,
-        recommended_actions=decision_res.recommended_actions,
+        reason=reason_value,
+        recommended_actions=recommended_actions,
     )
     db.add(decision)
-    batch.status = decision_res.decision
+    batch.status = decision_value
 
     record_audit_event(
         db,
@@ -813,7 +746,11 @@ def create_batch_decision(
         company_id=batch.company_id,
         vendor_id=batch.vendor_id,
         batch_id=batch.id,
-        details={"decision": decision_res.decision},
+        details={
+            "decision": decision_value,
+            "manual_override": request.manual_override,
+            "override_notes": request.notes.strip() if request.manual_override and request.notes else None,
+        },
         commit=False,
     )
     db.commit()
@@ -822,7 +759,7 @@ def create_batch_decision(
     # Render decision email template
     kimi_analysis = intelligence.kimi_analysis or {}
     subject, html_content = render_decision_email(
-        decision_res.decision,
+        decision_value,
         batch_number=batch.batch_number,
         vendor_name=vendor.vendor_name if vendor else "Valued Vendor",
         material=material.name if material else "Raw Material",
@@ -834,62 +771,87 @@ def create_batch_decision(
         primary_issues=validation.get("missing_information", []),
         uncertain_checks=[c.get("name") for c in checks if c.get("status") in ["MISSING", "NEEDS_REVIEW"]],
         missing_information=document_completeness["missing_documents"],
-        reason=decision_res.reason,
-        recommended_actions=decision_res.recommended_actions,
+        reason=reason_value,
+        recommended_actions=recommended_actions,
         reference_id=str(decision.id),
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
 
-    recipient = vendor.email if vendor and vendor.email else "vendor@example.com"
-    email_event = EmailEvent(
-        company_id=batch.company_id,
-        vendor_id=batch.vendor_id,
-        batch_id=batch.id,
-        decision_id=decision.id,
-        recipient_email=recipient,
-        subject=subject,
-        email_type=decision_res.decision,
-        status="PENDING",
-        provider="GOOGLE_SMTP",
-        html_content=html_content,
-        text_content=f"VendorIQ batch {batch.batch_number}: {decision_res.decision}\n{decision_res.reason}",
-    )
-    db.add(email_event)
-    db.commit()
-    db.refresh(email_event)
-
-    # Attempt Google SMTP delivery
-    try:
-        send_email(
-            recipient=recipient,
-            subject=subject,
-            html_content=html_content,
-            text_content=email_event.text_content,
+    recipient = (vendor.contact_email or vendor.email) if vendor else None
+    if not recipient:
+        last_req = (
+            db.query(EmailEvent)
+            .filter(EmailEvent.batch_id == batch.id)
+            .order_by(desc(EmailEvent.created_at))
+            .first()
         )
-        email_event.status = "SENT"
-        email_event.sent_at = datetime.now(timezone.utc)
-        record_audit_event(
-            db,
-            "Email Sent",
+        if last_req and last_req.recipient_email:
+            recipient = last_req.recipient_email
+    if not recipient:
+        received_audit = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.batch_id == batch.id, AuditEvent.event_type == "Email Received")
+            .order_by(desc(AuditEvent.created_at))
+            .first()
+        )
+        if received_audit and received_audit.details and received_audit.details.get("sender"):
+            recipient = received_audit.details.get("sender")
+
+    if recipient and vendor and not vendor.email:
+        vendor.email = recipient
+        db.add(vendor)
+
+    email_status = "NOT_APPLICABLE"
+    if recipient:
+        email_event = EmailEvent(
             company_id=batch.company_id,
             vendor_id=batch.vendor_id,
             batch_id=batch.id,
-            details={"email_id": str(email_event.id), "status": "SENT"},
+            decision_id=decision.id,
+            recipient_email=recipient,
+            subject=subject,
+            email_type=decision_value,
+            status="PENDING",
+            provider="GOOGLE_SMTP",
+            html_content=html_content,
+            text_content=f"VendorIQ batch {batch.batch_number}: {decision_value}\n{reason_value}",
         )
-    except Exception as exc:
-        email_event.status = "FAILED"
-        email_event.error_message = str(exc)
-        logger.warning(f"SMTP delivery not configured or failed: {exc}. Stored status=FAILED.")
+        db.add(email_event)
+        db.commit()
+        db.refresh(email_event)
 
-    db.commit()
+        try:
+            send_email(
+                recipient=recipient,
+                subject=subject,
+                html_content=html_content,
+                text_content=email_event.text_content,
+            )
+            email_event.status = "SENT"
+            email_event.sent_at = datetime.now(timezone.utc)
+            record_audit_event(
+                db,
+                "Email Sent",
+                company_id=batch.company_id,
+                vendor_id=batch.vendor_id,
+                batch_id=batch.id,
+                details={"email_id": str(email_event.id), "status": "SENT"},
+            )
+        except EmailDeliveryError as exc:
+            email_event.status = "FAILED"
+            email_event.error_message = str(exc)
+            logger.warning("SMTP delivery failed for batch %s: %s", batch.batch_number, exc)
+
+        db.commit()
+        email_status = email_event.status
 
     return BatchDecisionResponse(
-        decision=decision_res.decision,
+        decision=decision_value,
         risk_score=float(risk_score),
-        reason=decision_res.reason,
-        recommended_actions=decision_res.recommended_actions,
+        reason=reason_value,
+        recommended_actions=recommended_actions,
         reference_id=str(decision.id),
-        email_status=email_event.status,
+        email_status=email_status,
     )
 
 
@@ -949,13 +911,73 @@ async def upload_batch_document(
     db.commit()
     db.refresh(doc)
 
+    # Process document details (PDF parsing & extraction)
+    try:
+        doc_type_enum = DocumentType(doc.document_type)
+    except ValueError:
+        doc_type_enum = DocumentType.OTHER
+
+    proc_result = document_service.process_document(
+        file_source=file_path,
+        filename=file.filename,
+        document_type=doc_type_enum,
+        document_id=doc.id,
+    )
+    doc.extracted_data = proc_result.extracted_data
+    doc.status = proc_result.status.value
+    doc.extraction_error = proc_result.error
+    doc.processed_at = datetime.now(timezone.utc)
+
+    if doc_type_enum == DocumentType.COA and proc_result.extracted_data.get("purity") is not None:
+        if batch.purity_reported is None:
+            batch.purity_reported = proc_result.extracted_data.get("purity")
+
+    db.add(doc)
+    db.commit()
+
+    # Trigger batch validation and ML risk prediction
+    try:
+        material = db.query(RawMaterial).filter(RawMaterial.id == batch.raw_material_id).first()
+        vendor = db.query(Vendor).filter(Vendor.id == batch.vendor_id).first()
+
+        batch_docs = db.query(Document).filter(Document.batch_id == batch.id).all()
+        proc_docs = []
+        for d in batch_docs:
+            try:
+                dt_e = DocumentType(d.document_type)
+            except ValueError:
+                dt_e = DocumentType.OTHER
+            proc_docs.append(document_service.process_document(d.file_path, d.filename, dt_e, d.id))
+
+        val_res = validation_service.validate_batch(batch, material, vendor, proc_docs)
+        v_hist = vendor_history_service.analyze_vendor_history(db, batch.vendor_id, batch)
+        pred_res, feat = prediction_service.predict_risk(batch, material, vendor, val_res, v_hist, batch.purity_reported)
+        kimi_res = kimi_service.generate_explanation(vendor, material, batch, val_res, v_hist, pred_res)
+
+        intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
+        if not intel:
+            intel = BatchIntelligence(batch_id=batch.id)
+            db.add(intel)
+
+        intel.validation_result = val_res.model_dump(mode="json")
+        intel.vendor_history = v_hist.model_dump(mode="json")
+        intel.ml_features = feat
+        intel.ml_prediction = pred_res.model_dump(mode="json")
+        intel.kimi_analysis = kimi_res.model_dump(mode="json")
+        intel.kimi_status = kimi_res.kimi_status.value
+        batch.status = "PROCESSING"
+        db.commit()
+    except Exception as exc:
+        logger.warning("Could not auto-generate prediction after batch doc upload: %s", exc)
+
     return {
         "id": str(doc.id),
         "filename": doc.filename,
         "document_type": doc.document_type,
         "file_size": doc.file_size,
         "status": doc.status,
-        "message": "Document uploaded successfully."
+        "extracted_data": doc.extracted_data,
+        "message": "Batch document uploaded, extracted, and analyzed successfully."
     }
 
 
@@ -1100,7 +1122,9 @@ def request_batch_documents(
         "message": (
             f"Documentation request email successfully delivered to {recipient} via Google SMTP."
             if email_status == "SENT"
-            else f"Email queued for {recipient}. (Google SMTP notice: {error_message or 'Check SMTP credentials in Settings'})"
+            else (
+                f"Email delivery failed for {recipient}; the failed event is saved for retry. "
+                f"Google SMTP error: {error_message or 'Check SMTP credentials in Settings'}"
+            )
         ),
     }
-

@@ -75,15 +75,10 @@ export const VendorDetailPage: React.FC = () => {
     );
   }
 
-  // Generate synthetic performance trend if historical data isn't dense yet
-  const riskTrendData = [
-    { month: 'May', risk: Math.min(100, Math.max(10, (vendor.risk_score || 35) + 12)) },
-    { month: 'Jun', risk: Math.min(100, Math.max(10, (vendor.risk_score || 35) + 6)) },
-    { month: 'Jul', risk: Math.min(100, Math.max(10, (vendor.risk_score || 35) + 8)) },
-    { month: 'Aug', risk: Math.min(100, Math.max(10, (vendor.risk_score || 35) - 4)) },
-    { month: 'Sep', risk: Math.min(100, Math.max(10, (vendor.risk_score || 35) - 2)) },
-    { month: 'Oct', risk: vendor.risk_score || 25 },
-  ];
+  const riskTrendData = (vendor.risk_trend || []).map((item) => ({
+    month: item.month || 'Recorded batch',
+    risk: item.risk_score,
+  }));
 
   const getRiskBadge = (level?: string) => {
     switch (level?.toUpperCase()) {
@@ -96,7 +91,7 @@ export const VendorDetailPage: React.FC = () => {
       case 'CRITICAL':
         return <span className="badge badge-risk-critical">CRITICAL RISK</span>;
       default:
-        return <span className="badge badge-pending">PENDING</span>;
+        return <span className="badge badge-pending">UNKNOWN</span>;
     }
   };
 
@@ -135,7 +130,7 @@ export const VendorDetailPage: React.FC = () => {
                 {getRiskBadge(vendor.risk_level)}
               </div>
               <p className="text-xs text-slate-500 mt-1">
-                Registered Supplier • Compliance Status: <span className="text-emerald-700 font-semibold">{vendor.compliance_status || 'VERIFIED'}</span>
+                Registered Supplier • Compliance Status: <span className="text-slate-700 font-semibold">{vendor.certification_status || 'Not recorded'}</span>
               </p>
 
               <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 mt-3">
@@ -168,11 +163,11 @@ export const VendorDetailPage: React.FC = () => {
                 Supplier Health
               </span>
               <span className="text-2xl font-bold text-slate-900">
-                {Math.max(0, 100 - (vendor.risk_score || 20)).toFixed(0)}/100
+                {vendor.risk_score == null ? '—' : `${Math.max(0, 100 - vendor.risk_score).toFixed(0)}/100`}
               </span>
             </div>
             <div className="w-12 h-12 rounded-full border-4 border-emerald-500 flex items-center justify-center font-bold text-xs text-emerald-700 bg-white">
-              {Math.max(0, 100 - (vendor.risk_score || 20)).toFixed(0)}%
+              {vendor.risk_score == null ? '—' : `${Math.max(0, 100 - vendor.risk_score).toFixed(0)}%`}
             </div>
           </div>
         </div>
@@ -184,11 +179,13 @@ export const VendorDetailPage: React.FC = () => {
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
             Approval Rate
           </span>
-          <div className="text-2xl font-bold text-slate-900 mt-1">{vendor.approval_rate}%</div>
+          <div className="text-2xl font-bold text-slate-900 mt-1">
+            {vendor.approval_rate == null ? '—' : `${vendor.approval_rate.toFixed(1)}%`}
+          </div>
           <div className="w-full bg-slate-100 h-1.5 rounded-full mt-3 overflow-hidden">
             <div
               className="bg-emerald-500 h-1.5 rounded-full"
-              style={{ width: `${vendor.approval_rate || 90}%` }}
+              style={{ width: `${vendor.approval_rate ?? 0}%` }}
             ></div>
           </div>
           <p className="text-[11px] text-slate-600 mt-1.5">
@@ -201,12 +198,12 @@ export const VendorDetailPage: React.FC = () => {
             Quality Consistency
           </span>
           <div className="text-2xl font-bold text-slate-900 mt-1">
-            {vendor.quality_score ? `${vendor.quality_score}%` : `${vendor.avg_purity || 99.1}%`}
+            {vendor.quality_score == null ? '—' : `${vendor.quality_score}%`}
           </div>
           <div className="w-full bg-slate-100 h-1.5 rounded-full mt-3 overflow-hidden">
             <div
               className="bg-blue-600 h-1.5 rounded-full"
-              style={{ width: `${vendor.quality_score || vendor.avg_purity || 98}%` }}
+              style={{ width: `${vendor.quality_score ?? 0}%` }}
             ></div>
           </div>
           <p className="text-[11px] text-slate-600 mt-1.5">Mean assay purity vs spec tolerance</p>
@@ -217,12 +214,12 @@ export const VendorDetailPage: React.FC = () => {
             Delivery Reliability
           </span>
           <div className="text-2xl font-bold text-slate-900 mt-1">
-            {vendor.delivery_score ? `${vendor.delivery_score}%` : `${vendor.on_time_delivery_rate || 96}%`}
+            {vendor.delivery_score == null ? '—' : `${vendor.delivery_score}%`}
           </div>
           <div className="w-full bg-slate-100 h-1.5 rounded-full mt-3 overflow-hidden">
             <div
               className="bg-indigo-600 h-1.5 rounded-full"
-              style={{ width: `${vendor.delivery_score || vendor.on_time_delivery_rate || 95}%` }}
+              style={{ width: `${vendor.delivery_score ?? 0}%` }}
             ></div>
           </div>
           <p className="text-[11px] text-slate-600 mt-1.5">On-time dispatch fulfillment</p>
@@ -230,18 +227,18 @@ export const VendorDetailPage: React.FC = () => {
 
         <div className="v-card p-4">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Documentation Completeness
+            Documents Recorded
           </span>
           <div className="text-2xl font-bold text-slate-900 mt-1">
-            {vendor.documentation_score ? `${vendor.documentation_score}%` : `${vendor.documentation_completeness_rate || 94}%`}
+            {vendor.documents?.length ?? 0}
           </div>
           <div className="w-full bg-slate-100 h-1.5 rounded-full mt-3 overflow-hidden">
             <div
               className="bg-teal-600 h-1.5 rounded-full"
-              style={{ width: `${vendor.documentation_score || vendor.documentation_completeness_rate || 94}%` }}
+              style={{ width: `${Math.min(100, (vendor.documents?.length ?? 0) * 10)}%` }}
             ></div>
           </div>
-          <p className="text-[11px] text-slate-600 mt-1.5">COA, SDS, and GMP compliance integrity</p>
+          <p className="text-[11px] text-slate-600 mt-1.5">Uploaded files associated with this supplier</p>
         </div>
       </div>
 
@@ -251,10 +248,10 @@ export const VendorDetailPage: React.FC = () => {
         <div className="v-card p-5">
           <div className="mb-4">
             <h3 className="text-sm font-semibold text-slate-900">Performance Risk Trend</h3>
-            <p className="text-xs text-slate-500">6-Month historical risk oscillation index</p>
+            <p className="text-xs text-slate-500">Risk scores saved with this supplier’s batches</p>
           </div>
           <div className="h-56 w-full">
-            <ResponsiveContainer width="100%" height="100%">
+            {riskTrendData.length ? <ResponsiveContainer width="100%" height="100%">
               <LineChart data={riskTrendData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} />
@@ -269,7 +266,7 @@ export const VendorDetailPage: React.FC = () => {
                   name="Risk Score"
                 />
               </LineChart>
-            </ResponsiveContainer>
+            </ResponsiveContainer> : <p className="text-xs text-slate-500">No saved risk predictions are available.</p>}
           </div>
         </div>
 
@@ -287,8 +284,7 @@ export const VendorDetailPage: React.FC = () => {
 
           <div className="space-y-3 text-xs">
             <div className="p-3 bg-white rounded-lg border border-slate-200 text-slate-700 leading-relaxed">
-              {vendor.kimi_assessment?.summary ||
-                `${vendor.name} demonstrates a stable supplier profile with ${vendor.approval_rate || 90}% historical lot compliance. Certificate of Analysis (COA) records indicate high analytical fidelity.`}
+              {vendor.kimi_assessment?.summary || 'No saved AI assessment is available for this supplier.'}
             </div>
 
             <div>
@@ -297,29 +293,14 @@ export const VendorDetailPage: React.FC = () => {
                 Recommended Actions
               </h4>
               <ul className="space-y-1.5 pl-1">
-                {(vendor.kimi_assessment?.recommendations && vendor.kimi_assessment.recommendations.length > 0) ? (
+                {vendor.kimi_assessment?.recommendations?.length ? (
                   vendor.kimi_assessment.recommendations.map((rec, i) => (
                     <li key={i} className="flex items-start gap-2 text-slate-600">
                       <span className="text-blue-500 font-bold">•</span>
                       <span>{rec}</span>
                     </li>
                   ))
-                ) : (
-                  <>
-                    <li className="flex items-start gap-2 text-slate-600">
-                      <span className="text-blue-500 font-bold">•</span>
-                      <span>Maintain standard sampling frequency under ISO-9001 guidelines.</span>
-                    </li>
-                    <li className="flex items-start gap-2 text-slate-600">
-                      <span className="text-blue-500 font-bold">•</span>
-                      <span>Automatic fast-track clearance for routine ascorbic and excipient shipments.</span>
-                    </li>
-                    <li className="flex items-start gap-2 text-slate-600">
-                      <span className="text-blue-500 font-bold">•</span>
-                      <span>Schedule annual facility re-certification audit in Q4 2026.</span>
-                    </li>
-                  </>
-                )}
+                ) : <li className="text-xs text-slate-500">No recommendations are available.</li>}
               </ul>
             </div>
           </div>
@@ -335,17 +316,14 @@ export const VendorDetailPage: React.FC = () => {
             <h3 className="text-sm font-semibold text-slate-900">Active Certifications</h3>
           </div>
           <div className="space-y-2">
-            {(vendor.certifications && vendor.certifications.length > 0
-              ? vendor.certifications
-              : ['ISO 9001:2015 Quality Management', 'cGMP Compliant Facility', 'FDA Registration #3009841', 'HACCP Food Safety']
-            ).map((cert, idx) => (
+            {(vendor.certifications || []).length ? vendor.certifications?.map((cert, idx) => (
               <div key={idx} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs">
-                <span className="font-medium text-slate-800">{cert}</span>
-                <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3" /> Valid
+                <span className="font-medium text-slate-800">{cert.name}</span>
+                <span className="text-slate-600 font-semibold flex items-center gap-1">
+                  {cert.status || 'Status not recorded'}
                 </span>
               </div>
-            ))}
+            )) : <p className="text-xs text-slate-500">No certification documents recorded.</p>}
           </div>
         </div>
 

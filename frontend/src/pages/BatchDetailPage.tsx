@@ -133,10 +133,10 @@ export const BatchDetailPage: React.FC = () => {
 
   // Action 4: Retry SMTP Email
   const retryEmailMutation = useMutation({
-    mutationFn: () => emailApi.retryEmail(id!),
+    mutationFn: (eventId: string) => emailApi.retryEmail(eventId),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['batch', id] });
-      setActionMessage(data.message || 'SMTP notification dispatched.');
+      setActionMessage(`Email retry completed with status: ${data.status}.`);
       setTimeout(() => setActionMessage(null), 5000);
     },
     onError: (err: any) => {
@@ -186,50 +186,7 @@ export const BatchDetailPage: React.FC = () => {
     }
   };
 
-  const checks = batch.validation_results?.checks || [
-    {
-      name: 'Specification Requirement',
-      category: 'Specification',
-      required: `>= ${batch.raw_material?.required_purity || 99.0}%`,
-      actual: `${batch.validation_results?.purity_check?.actual || 99.3}%`,
-      status: (batch.validation_results?.purity_check?.passed ?? true) ? 'PASSED' : 'FAILED',
-    },
-    {
-      name: 'Certificate of Analysis (COA)',
-      category: 'COA',
-      required: 'Authorized Lab Stamp',
-      actual: batch.validation_results?.coa_verified ? 'Verified & Legible' : 'Verified',
-      status: (batch.validation_results?.coa_verified ?? true) ? 'PASSED' : 'WARNING',
-    },
-    {
-      name: 'Safety Data Sheet (SDS)',
-      category: 'SDS',
-      required: 'GHS 16-Section Revision',
-      actual: batch.validation_results?.sds_verified ? 'Compliant 2025/2026' : 'Verified',
-      status: (batch.validation_results?.sds_verified ?? true) ? 'PASSED' : 'WARNING',
-    },
-    {
-      name: 'Good Manufacturing Practice (GMP)',
-      category: 'GMP',
-      required: 'Cleanroom Lot Clearance',
-      actual: batch.validation_results?.gmp_verified ? 'ISO Cleanroom Certified' : 'Verified',
-      status: (batch.validation_results?.gmp_verified ?? true) ? 'PASSED' : 'FAILED',
-    },
-    {
-      name: 'Potency / Assay Testing',
-      category: 'Testing',
-      required: 'HPLC Assay Tolerance ±1%',
-      actual: `${batch.validation_results?.purity_check?.actual || 99.3}%`,
-      status: (batch.validation_results?.purity_check?.passed ?? true) ? 'PASSED' : 'FAILED',
-    },
-    {
-      name: 'Heavy Metals & Contaminants',
-      category: 'Contaminants',
-      required: '< 5 ppm (Heavy Metals)',
-      actual: (batch.validation_results?.contaminants_check?.passed ?? true) ? '< 1 ppm (Clear)' : 'Flagged Residue',
-      status: (batch.validation_results?.contaminants_check?.passed ?? true) ? 'PASSED' : 'FAILED',
-    },
-  ];
+  const checks = batch.validation_results?.checks || [];
 
   return (
     <div className="space-y-6">
@@ -368,14 +325,17 @@ export const BatchDetailPage: React.FC = () => {
                   </span>
                 ) : batch.email_status === 'FAILED' ? (
                   <button
-                    onClick={() => retryEmailMutation.mutate()}
-                    className="badge badge-rejected text-xs font-semibold cursor-pointer hover:bg-rose-100"
+                    onClick={() => batch.email_event?.id && retryEmailMutation.mutate(batch.email_event.id)}
+                    disabled={!batch.email_event?.id || retryEmailMutation.isPending}
+                    className="badge badge-rejected text-xs font-semibold cursor-pointer hover:bg-rose-100 disabled:opacity-50"
                     title="Retry dispatching email"
                   >
                     <RotateCw className="w-3 h-3 mr-1" /> RETRY EMAIL
                   </button>
                 ) : (
-                  <span className="badge badge-pending text-xs">AWAITING DECISION</span>
+                  <span className="badge badge-pending text-xs">
+                    {batch.email_status === 'NOT_APPLICABLE' ? 'NO VENDOR EMAIL' : 'AWAITING DECISION'}
+                  </span>
                 )}
               </div>
             </div>
@@ -403,7 +363,11 @@ export const BatchDetailPage: React.FC = () => {
             <span className="text-xs font-bold text-slate-800 mt-1 block truncate">
               {batch.raw_material?.name}
             </span>
-            <span className="text-[10px] text-slate-500">Spec: ≥{batch.raw_material?.required_purity || 99.0}%</span>
+            <span className="text-[10px] text-slate-500">
+              {batch.raw_material?.required_purity != null
+                ? `Spec: ≥${batch.raw_material.required_purity}%`
+                : 'Specification not configured'}
+            </span>
           </div>
 
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80">
@@ -419,13 +383,15 @@ export const BatchDetailPage: React.FC = () => {
             <span className="text-xs font-bold text-slate-800 mt-1 block">
               {batch.quantity} {batch.unit}
             </span>
-            <span className="text-[10px] text-slate-500">Unit: ${batch.price_per_unit || 18.5}</span>
+            <span className="text-[10px] text-slate-500">
+              {batch.price_per_unit != null ? `Unit: $${batch.price_per_unit}` : 'Unit price not recorded'}
+            </span>
           </div>
 
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80">
             <span className="text-[11px] font-semibold text-slate-400 uppercase block">Mfg Date</span>
             <span className="text-xs font-bold text-slate-800 mt-1 block">
-              {batch.manufacturing_date || '2026-03-01'}
+              {batch.manufacturing_date || 'Not recorded'}
             </span>
             <span className="text-[10px] text-slate-500">Production Lot</span>
           </div>
@@ -433,9 +399,13 @@ export const BatchDetailPage: React.FC = () => {
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80">
             <span className="text-[11px] font-semibold text-slate-400 uppercase block">Expiry Date</span>
             <span className="text-xs font-bold text-slate-800 mt-1 block">
-              {batch.expiry_date || '2027-03-01'}
+              {batch.expiry_date || 'Not recorded'}
             </span>
-            <span className="text-[10px] text-emerald-600 font-semibold">Valid &gt; 12 mo</span>
+            {batch.expiry_date && (
+              <span className="text-[10px] text-slate-500 font-semibold">
+                {new Date(batch.expiry_date) < new Date() ? 'Expired' : 'Expiry date recorded'}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -445,7 +415,7 @@ export const BatchDetailPage: React.FC = () => {
         <div className="v-card-header">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Quality Checks & Specification Verification</h3>
-            <p className="text-xs text-slate-500">COA, SDS, GMP, testing, and contaminant thresholds</p>
+            <p className="text-xs text-slate-500">Checks and thresholds stored by the validation service</p>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -460,7 +430,13 @@ export const BatchDetailPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {checks.map((chk, i) => (
+              {checks.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-xs text-slate-500">
+                    No validation checks are stored yet. Run validation to populate this section.
+                  </td>
+                </tr>
+              ) : checks.map((chk, i) => (
                 <tr key={i}>
                   <td className="font-semibold text-slate-800">{chk.name}</td>
                   <td>
@@ -479,9 +455,15 @@ export const BatchDetailPage: React.FC = () => {
                       <span className="badge badge-needs-review text-xs font-semibold">
                         <AlertTriangle className="w-3 h-3" /> ATTENTION
                       </span>
-                    ) : (
+                    ) : chk.status === 'PENDING' ? (
+                      <span className="badge badge-pending text-xs font-semibold">NOT RUN</span>
+                    ) : chk.status === 'FAILED' ? (
                       <span className="badge badge-rejected text-xs font-semibold">
                         <X className="w-3 h-3" /> FAILED
+                      </span>
+                    ) : (
+                      <span className="badge badge-needs-review text-xs font-semibold">
+                        <AlertTriangle className="w-3 h-3" /> REVIEW
                       </span>
                     )}
                   </td>
@@ -498,36 +480,36 @@ export const BatchDetailPage: React.FC = () => {
         <div className="v-card p-5 flex flex-col justify-between">
           <div>
             <h3 className="text-sm font-semibold text-slate-900 mb-1">Historical Supplier Comparison</h3>
-            <p className="text-xs text-slate-500 mb-4">Benchmarking batch metrics against supplier track record</p>
+            <p className="text-xs text-slate-500 mb-4">Stored supplier history for this batch</p>
 
             <div className="space-y-3">
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80 flex items-center justify-between text-xs">
                 <span className="text-slate-600">Supplier Previous Lots</span>
                 <span className="font-bold text-slate-900">
-                  {batch.historical_comparison?.previous_batches_count ?? (batch.vendor?.total_batches || 20)} Lots
+                  {batch.historical_comparison?.previous_batches_count ?? '—'} Lots
                 </span>
               </div>
 
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80 flex items-center justify-between text-xs">
                 <span className="text-slate-600">Historical Approval Rate</span>
                 <span className="font-bold text-emerald-600">
-                  {batch.vendor?.approval_rate ?? 95}% (
-                  {batch.historical_comparison?.approved_count ?? (batch.vendor?.approved_batches || 19)} Approved /{' '}
-                  {batch.historical_comparison?.rejected_count ?? (batch.vendor?.rejected_batches || 1)} Rejected)
+                  {batch.vendor?.approval_rate ?? '—'}% (
+                  {batch.historical_comparison?.approved_count ?? '—'} Approved /{' '}
+                  {batch.historical_comparison?.rejected_count ?? '—'} Rejected)
                 </span>
               </div>
 
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80 flex items-center justify-between text-xs">
                 <span className="text-slate-600">Historical Average Purity</span>
                 <span className="font-bold text-slate-900">
-                  {batch.historical_comparison?.vendor_average_purity ?? (batch.vendor?.avg_purity || 99.1)}%
+                  {batch.historical_comparison?.vendor_average_purity ?? '—'}%
                 </span>
               </div>
 
               <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80 flex items-center justify-between text-xs">
                 <span className="text-slate-600">On-Time Fulfillment History</span>
                 <span className="font-bold text-blue-700">
-                  {batch.historical_comparison?.on_time_rate ?? (batch.vendor?.on_time_delivery_rate || 97)}%
+                  {batch.historical_comparison?.on_time_rate ?? '—'}%
                 </span>
               </div>
             </div>
@@ -536,7 +518,7 @@ export const BatchDetailPage: React.FC = () => {
           <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500">
             Statistical Purity Variance:{' '}
             <span className="font-semibold text-slate-800">
-              {batch.historical_comparison?.variance || '+0.2% vs historical baseline'}
+              {batch.historical_comparison?.variance || 'Not available'}
             </span>
           </div>
         </div>
@@ -548,16 +530,18 @@ export const BatchDetailPage: React.FC = () => {
               <h3 className="text-sm font-semibold text-slate-900">ML Risk Prediction Model</h3>
               <p className="text-xs text-slate-500">Random Forest Ensemble + Gradient Boosting</p>
             </div>
-            <span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-600">
-              v2.4-PROD
-            </span>
+            {batch.prediction?.model_version && (
+              <span className="font-mono text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-600">
+                {batch.prediction.model_version}
+              </span>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3 mb-4">
             <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80 text-center">
               <span className="text-[10px] font-semibold text-slate-400 uppercase block">Risk Score</span>
               <span className="text-2xl font-black text-slate-900 mt-1 block">
-                {batch.risk_score?.toFixed(1) || '14.5'}
+                {batch.risk_score?.toFixed(1) ?? '—'}
               </span>
               <span className="text-[10px] text-slate-500">Scale: 0-100</span>
             </div>
@@ -565,7 +549,7 @@ export const BatchDetailPage: React.FC = () => {
             <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80 text-center">
               <span className="text-[10px] font-semibold text-slate-400 uppercase block">Probability</span>
               <span className="text-2xl font-black text-slate-900 mt-1 block">
-                {batch.risk_probability ? `${(batch.risk_probability * 100).toFixed(0)}%` : '15%'}
+                {batch.risk_probability != null ? `${(batch.risk_probability * 100).toFixed(0)}%` : '—'}
               </span>
               <span className="text-[10px] text-slate-500">Lot Failure Chance</span>
             </div>
@@ -574,40 +558,26 @@ export const BatchDetailPage: React.FC = () => {
               <span className="text-[10px] font-semibold text-slate-400 uppercase block">Risk Level</span>
               <div className="mt-1">
                 <span className={`badge font-bold text-xs ${getRiskColor(batch.risk_level)}`}>
-                  {batch.risk_level || 'LOW'}
+                  {batch.risk_level || 'UNKNOWN'}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Model Features breakdown */}
+          {/* Stored model feature importance */}
           <div className="space-y-2">
-            <span className="text-xs font-semibold text-slate-700 block">Top Predictive Features:</span>
-            <div className="space-y-1.5 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-600">Purity Deviation vs 99.0% Spec</span>
-                <span className="font-mono font-semibold text-slate-900">Weight: 42%</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-blue-600 h-1.5 rounded-full" style={{ width: '42%' }}></div>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-slate-600">Supplier Lot Rejection Track Record</span>
-                <span className="font-mono font-semibold text-slate-900">Weight: 28%</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: '28%' }}></div>
-              </div>
-
-              <div className="flex items-center justify-between pt-1">
-                <span className="text-slate-600">Documentary Completeness (COA/SDS)</span>
-                <span className="font-mono font-semibold text-slate-900">Weight: 18%</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                <div className="bg-teal-600 h-1.5 rounded-full" style={{ width: '18%' }}></div>
-              </div>
-            </div>
+            <span className="text-xs font-semibold text-slate-700 block">Top Predictive Features</span>
+            {batch.prediction?.top_risk_factors?.length ? (
+              <ul className="space-y-1.5 text-xs text-slate-600 list-disc pl-4">
+                {batch.prediction.top_risk_factors.map((factor, index) => (
+                  <li key={`${factor}-${index}`}>{factor}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-slate-500">
+                No feature explanation is available for this prediction.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -637,8 +607,7 @@ export const BatchDetailPage: React.FC = () => {
                 Executive Summary
               </h4>
               <div className="p-3.5 bg-white rounded-lg border border-slate-200 text-slate-700 leading-relaxed shadow-sm">
-                {batch.kimi_intelligence?.summary ||
-                  `Batch ${batch.batch_number} for raw material ${batch.raw_material?.name} exhibits full chemical and regulatory compliance. Extracted purity of ${batch.validation_results?.purity_check?.actual || 99.3}% exceeds the mandatory minimum specification of ${batch.raw_material?.required_purity || 99.0}%. Historical lot consistency from ${batch.vendor?.name} supports low systemic risk.`}
+                {batch.kimi_intelligence?.summary || 'No AI assessment has been stored for this batch.'}
               </div>
             </div>
 
@@ -647,19 +616,14 @@ export const BatchDetailPage: React.FC = () => {
                 Key Scientific Findings
               </h4>
               <ul className="space-y-2">
-                {(batch.kimi_intelligence?.key_findings && batch.kimi_intelligence.key_findings.length > 0
-                  ? batch.kimi_intelligence.key_findings
-                  : [
-                      `Assay purity of ${batch.validation_results?.purity_check?.actual || 99.3}% verified against reference monograph specifications.`,
-                      'Certificate of Analysis (COA) issued by ISO-17025 accredited laboratory with digital verification signature.',
-                      'Zero detectable heavy metal residues (<1 ppm versus 5 ppm threshold).',
-                    ]
-                ).map((finding, idx) => (
+                {batch.kimi_intelligence?.key_findings?.length ? batch.kimi_intelligence.key_findings.map((finding, idx) => (
                   <li key={idx} className="flex items-start gap-2 p-2 rounded bg-slate-50 border border-slate-200/60 text-slate-700">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0 mt-0.5" />
                     <span>{finding}</span>
                   </li>
-                ))}
+                )) : (
+                  <li className="text-xs text-slate-500">No findings are available.</li>
+                )}
               </ul>
             </div>
           </div>
@@ -673,21 +637,14 @@ export const BatchDetailPage: React.FC = () => {
               <div className="p-3.5 bg-white rounded-lg border border-slate-200 space-y-2 text-slate-700 leading-relaxed shadow-sm">
                 <p>
                   <strong className="text-slate-900">Business Impact:</strong>{' '}
-                  {batch.kimi_intelligence?.business_impact ||
-                    'Immediate lot release maintains planned pharmaceutical formulation schedules with zero projected downtime or quarantine holding expense.'}
+                  {batch.kimi_intelligence?.business_impact || 'No business impact assessment is available.'}
                 </p>
                 <div>
                   <strong className="text-slate-900">Identified Risk Factors:</strong>
                   <ul className="list-disc pl-4 mt-1 space-y-1 text-slate-600">
-                    {(batch.kimi_intelligence?.risk_factors && batch.kimi_intelligence.risk_factors.length > 0
-                      ? batch.kimi_intelligence.risk_factors
-                      : [
-                          'Shelf-life expiry is greater than 12 months; standard storage condition compliance required.',
-                          'Lot shipment temperature logging verified within normal cold-chain tolerances.',
-                        ]
-                    ).map((rf, idx) => (
+                    {batch.kimi_intelligence?.risk_factors?.length ? batch.kimi_intelligence.risk_factors.map((rf, idx) => (
                       <li key={idx}>{rf}</li>
-                    ))}
+                    )) : <li>No risk factors are available.</li>}
                   </ul>
                 </div>
               </div>
@@ -698,21 +655,14 @@ export const BatchDetailPage: React.FC = () => {
                 Recommended Actions
               </h4>
               <ul className="space-y-1.5">
-                {(batch.kimi_intelligence?.recommended_actions && batch.kimi_intelligence.recommended_actions.length > 0
-                  ? batch.kimi_intelligence.recommended_actions
-                  : [
-                      'Approve batch release for production formulation immediately.',
-                      'Dispatch automated formal qualification letter to supplier contact email.',
-                      'Update supplier quarterly rating scorecard with positive purity score.',
-                    ]
-                ).map((act, idx) => (
+                {batch.kimi_intelligence?.recommended_actions?.length ? batch.kimi_intelligence.recommended_actions.map((act, idx) => (
                   <li key={idx} className="flex items-start gap-2 p-2 rounded bg-blue-50/70 border border-blue-200/60 text-slate-700">
                     <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] font-bold flex-shrink-0">
                       {idx + 1}
                     </span>
                     <span>{act}</span>
                   </li>
-                ))}
+                )) : <li className="text-xs text-slate-500">No actions are available.</li>}
               </ul>
             </div>
           </div>
@@ -739,7 +689,11 @@ export const BatchDetailPage: React.FC = () => {
             </button>
 
             <button
-              onClick={() => decisionMutation.mutate({ manual_override: false, decision: 'APPROVED', notes: '' })}
+              onClick={() => {
+                setOverrideDecision('APPROVED');
+                setOverrideNotes('');
+                setShowOverrideBox(true);
+              }}
               disabled={decisionMutation.isPending}
               className="btn-primary bg-emerald-600 hover:bg-emerald-700 text-xs"
             >
@@ -748,7 +702,11 @@ export const BatchDetailPage: React.FC = () => {
             </button>
 
             <button
-              onClick={() => decisionMutation.mutate({ manual_override: false, decision: 'REJECTED', notes: 'Quality criteria not met' })}
+              onClick={() => {
+                setOverrideDecision('REJECTED');
+                setOverrideNotes('');
+                setShowOverrideBox(true);
+              }}
               disabled={decisionMutation.isPending}
               className="btn-danger text-xs"
             >
@@ -799,7 +757,7 @@ export const BatchDetailPage: React.FC = () => {
               </button>
               <button
                 type="button"
-                disabled={!overrideDecision || decisionMutation.isPending}
+                disabled={!overrideDecision || !overrideNotes.trim() || decisionMutation.isPending}
                 onClick={() =>
                   decisionMutation.mutate({
                     manual_override: true,
@@ -809,7 +767,7 @@ export const BatchDetailPage: React.FC = () => {
                 }
                 className="btn-primary text-xs"
               >
-                Apply Override & Dispath Email
+                Apply Override & Dispatch Email
               </button>
             </div>
           </div>
@@ -824,6 +782,31 @@ export const BatchDetailPage: React.FC = () => {
           End-to-End Audit Trail Timeline
         </h3>
 
+        <div className="space-y-3">
+          {batch.timeline?.length ? (
+            batch.timeline.map((event) => (
+              <div key={event.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-900">{event.label}</span>
+                  {event.timestamp && (
+                    <time className="text-[11px] text-slate-500">
+                      {new Date(event.timestamp).toLocaleString()}
+                    </time>
+                  )}
+                </div>
+                {event.details && Object.keys(event.details).length > 0 && (
+                  <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-slate-600">
+                    {JSON.stringify(event.details, null, 2)}
+                  </pre>
+                )}
+              </div>
+            ))
+          ) : (
+            <p className="text-xs text-slate-500">No audit events have been recorded for this batch.</p>
+          )}
+        </div>
+
+        {false && (
         <div className="relative pl-6 space-y-6 before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
           {/* Step 1: Email Received */}
           <div className="relative flex items-start gap-4">
@@ -973,6 +956,7 @@ export const BatchDetailPage: React.FC = () => {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Upload Vendor PDF Modal */}

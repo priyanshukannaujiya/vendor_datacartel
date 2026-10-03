@@ -9,6 +9,7 @@ export interface User {
   full_name: string;
   role: string;
   company_id?: string;
+  company_name?: string;
   is_active: boolean;
   created_at?: string;
 }
@@ -19,17 +20,18 @@ export interface Vendor {
   vendor_code: string;
   contact_name?: string;
   contact_email?: string;
+  industry?: string;
   phone?: string;
   address?: string;
   status: string;
-  risk_score: number;
-  risk_level: RiskLevel;
-  approval_rate: number;
-  quality_score: number;
-  delivery_score: number;
+  risk_score?: number;
+  risk_level?: RiskLevel;
+  approval_rate?: number;
+  quality_score?: number;
+  delivery_score?: number;
   documentation_score: number;
-  certifications?: string[];
   compliance_status?: string;
+  certification_status?: string;
   total_batches: number;
   approved_batches: number;
   rejected_batches: number;
@@ -44,6 +46,10 @@ export interface Vendor {
     strengths?: string[];
     weaknesses?: string[];
   };
+  risk_trend?: { month?: string; risk_score: number }[];
+  certifications?: { name: string; status?: string; document_type?: string }[];
+  documents?: { id: string; filename: string; document_type?: string; status?: string }[];
+  documentation_completeness?: number;
   created_at: string;
   updated_at?: string;
 }
@@ -75,7 +81,12 @@ export interface DocumentRecord {
 }
 
 export interface MLPrediction {
+  id?: string;
   batch_id?: string;
+  batch_number?: string;
+  batch_status?: string;
+  vendor_name?: string;
+  raw_material_name?: string;
   risk_score: number;
   risk_level: RiskLevel;
   risk_probability: number;
@@ -213,6 +224,15 @@ export interface BatchDetail extends Batch {
   prediction?: MLPrediction;
   kimi_intelligence?: KimiIntelligence;
   decision_record?: DecisionRecord;
+  email_event?: {
+    id: string;
+    status: EmailStatus;
+    recipient_email?: string;
+    subject?: string;
+    sent_at?: string;
+    error_message?: string;
+  };
+  email_status: EmailStatus;
   timeline?: AuditTimelineEvent[];
 }
 
@@ -230,10 +250,7 @@ export interface DashboardAnalytics {
   }[];
   risk_trend: {
     date: string;
-    avg_risk: number;
-    low: number;
-    medium: number;
-    high: number;
+    avg_risk: number | null;
   }[];
   batch_approval_trend: {
     date: string;

@@ -104,13 +104,88 @@ async def upload_document(
     db.commit()
     db.refresh(doc)
 
+    # Process document details (PDF parsing & extraction)
+    from app.services.document_service import DocumentProcessingService
+    from app.schemas.document import DocumentType as DocTypeEnum
+    
+    doc_svc = DocumentProcessingService()
+    try:
+        dt_enum = DocTypeEnum(doc.document_type)
+    except Exception:
+        dt_enum = DocTypeEnum.OTHER
+
+    proc_result = doc_svc.process_document(
+        file_source=file_path,
+        filename=file.filename,
+        document_type=dt_enum,
+        document_id=doc.id,
+    )
+    doc.extracted_data = proc_result.extracted_data
+    doc.processing_status = proc_result.status.value
+    doc.extraction_error = proc_result.error
+    doc.processed_at = datetime.now(timezone.utc)
+    db.add(doc)
+    db.commit()
+
+    # If associated with a batch, auto-run validation and risk prediction
+    if batch_id:
+        try:
+            batch = db.query(Batch).filter(Batch.id == batch_id).first()
+            if batch:
+                if dt_enum == DocTypeEnum.COA and proc_result.extracted_data.get("purity") is not None:
+                    if batch.purity_reported is None:
+                        batch.purity_reported = proc_result.extracted_data.get("purity")
+
+                from app.services.validation_service import BatchValidationService
+                from app.services.vendor_history_service import VendorHistoryService
+                from app.services.prediction_service import BatchRiskPredictionService
+                from app.services.kimi_service import KimiReasoningService
+                from app.models.intelligence import BatchIntelligence
+                from app.models.raw_material import RawMaterial
+
+                material = db.query(RawMaterial).filter(RawMaterial.id == batch.raw_material_id).first()
+                vendor = batch.vendor
+
+                val_svc = BatchValidationService()
+                hist_svc = VendorHistoryService()
+                pred_svc = BatchRiskPredictionService()
+                kimi_svc = KimiReasoningService()
+
+                batch_docs = db.query(Document).filter(Document.batch_id == batch.id).all()
+                proc_docs = [
+                    proc_result if d.id == doc.id else doc_svc.process_document(d.file_path, d.filename, dt_enum, d.id)
+                    for d in batch_docs
+                ]
+
+                val_res = val_svc.validate_batch(batch, material, vendor, proc_docs)
+                v_hist = hist_svc.analyze_vendor_history(db, batch.vendor_id, batch)
+                pred_res, feat = pred_svc.predict_risk(batch, material, vendor, val_res, v_hist, batch.purity_reported)
+                kimi_res = kimi_svc.generate_explanation(vendor, material, batch, val_res, v_hist, pred_res)
+
+                intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
+                if not intel:
+                    intel = BatchIntelligence(batch_id=batch.id)
+                    db.add(intel)
+
+                intel.validation_result = val_res.model_dump(mode="json")
+                intel.vendor_history = v_hist.model_dump(mode="json")
+                intel.ml_features = feat
+                intel.ml_prediction = pred_res.model_dump(mode="json")
+                intel.kimi_analysis = kimi_res.model_dump(mode="json")
+                intel.kimi_status = kimi_res.kimi_status.value
+                batch.status = "PROCESSING"
+                db.commit()
+        except Exception:
+            pass
+
     return {
         "id": str(doc.id),
         "filename": doc.filename,
         "document_type": doc.document_type,
         "file_size": doc.file_size,
         "status": doc.status,
-        "message": "Document uploaded successfully."
+        "extracted_data": doc.extracted_data,
+        "message": "Document uploaded, parsed, and analyzed successfully."
     }
 
 

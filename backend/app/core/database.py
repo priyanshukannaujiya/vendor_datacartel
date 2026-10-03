@@ -25,8 +25,13 @@ def get_engine():
             engine_kwargs["connect_args"] = {"check_same_thread": False}
         else:
             engine_kwargs["pool_pre_ping"] = True
-            if "neon.tech" in db_url or "sslmode=" in db_url:
-                engine_kwargs["pool_recycle"] = 300
+            engine_kwargs["pool_recycle"] = 60
+            engine_kwargs["connect_args"] = {
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 5,
+            }
 
         engine = create_engine(db_url, **engine_kwargs)
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

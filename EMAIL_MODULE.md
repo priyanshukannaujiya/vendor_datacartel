@@ -57,6 +57,40 @@ Enable Google's 2-Step Verification and create a Google App Password for the
 mail account. The backend sends over STARTTLS and includes both plain text and
 HTML alternatives. Credentials are not logged.
 
+## Receiving supplier PDF replies
+
+The backend can optionally poll the same Google mailbox over IMAP. Enable IMAP
+for the Google account, then set these variables in the Render backend
+environment (or local backend `.env`):
+
+| Variable | Value |
+| --- | --- |
+| `IMAP_ENABLED` | `true` |
+| `IMAP_HOST` | `imap.gmail.com` |
+| `IMAP_PORT` | `993` |
+| `IMAP_USERNAME` | Inbox address; defaults to `SMTP_USERNAME` |
+| `IMAP_PASSWORD` | Google App Password; defaults to `SMTP_PASSWORD` |
+| `IMAP_FOLDER` | `INBOX` |
+| `IMAP_POLL_INTERVAL_SECONDS` | Poll interval, default `120` (minimum `30`) |
+| `IMAP_LOOKBACK_DAYS` | How far back a sent request may be replied to; default `30` |
+
+The receiver accepts PDF attachments only from the recipient of a previously
+sent `DOCUMENT_REQUEST` email within the lookback window, and requires the
+original batch number in the reply subject. It searches only those known sender
+addresses and does not crawl the whole inbox. It stores the attachment against that batch, records an
+`Email Received` audit event, and extracts embedded PDF text using the existing
+document parser. COA/SDS/GMP document types are inferred from the attachment
+filename. Duplicate messages are idempotent. Attachments larger than
+`MAX_UPLOAD_MB` are rejected; if a reply has only rejected or unsupported
+attachments it remains unread for operator follow-up. Unrelated unread messages
+are not opened or marked read, and a mailbox UID checkpoint prevents rescanning
+the same messages on every poll.
+
+This is text extraction, not OCR: image-only scanned PDFs are stored as
+`NEEDS_REVIEW` because no OCR engine is configured. The background receiver
+runs in the FastAPI process; keep a single backend instance polling a given
+mailbox to avoid concurrent pollers.
+
 ## Templates, storage, and retry
 
 Gmail-compatible inline-CSS templates are in `app/templates/emails/`:
@@ -80,15 +114,16 @@ retry requests from sending the same event twice.
 
 ## Audit events
 
+The inbound email receiver records `Email Received` and `Documents Processed`.
 The existing batch process route records `Documents Processed` and
 `Validation Completed`. The prediction route records `Risk Predicted` and,
 when Kimi succeeds, `Kimi Assessment Generated`. The decision route records
 `Decision Made` and successful email delivery records `Email Sent`.
-`Email Received` must be recorded by a future intake/email ingestion handler;
-the current backend has no such handler and therefore does not fabricate that
-event.
+The inbox receiver is opt-in and must be enabled using the IMAP environment
+variables before it will receive email attachments.
 
 ## Tests
 
 Run `pytest`. Tests cover all decision outcomes, SMTP STARTTLS and failure,
-decision persistence when sending fails, email event storage, and retry.
+decision persistence when sending fails, email event storage, inbound sender
+matching, PDF extraction, duplicate handling, and retry.
