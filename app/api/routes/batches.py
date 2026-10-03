@@ -18,6 +18,7 @@ from app.services.validation_service import validation_service
 from app.services.vendor_history_service import vendor_history_service
 from app.services.prediction_service import prediction_service
 from app.services.kimi_service import kimi_service
+from app.services.audit_service import record_audit_event
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,22 @@ def process_batch(
 
     intel.validation_result = validation_res.model_dump()
     intel.vendor_history = vendor_hist.model_dump()
+    record_audit_event(
+        db,
+        "Documents Processed",
+        vendor_id=batch.vendor_id,
+        batch_id=batch.id,
+        details={"document_count": len(processed_results)},
+        commit=False,
+    )
+    record_audit_event(
+        db,
+        "Validation Completed",
+        vendor_id=batch.vendor_id,
+        batch_id=batch.id,
+        details={"status": validation_res.overall_status.value},
+        commit=False,
+    )
     db.commit()
 
     return BatchProcessResponse(
@@ -215,6 +232,26 @@ def predict_batch_risk(
     intel.ml_prediction = prediction_result.model_dump()
     intel.kimi_analysis = kimi_analysis.model_dump()
     intel.kimi_status = kimi_analysis.kimi_status.value
+    record_audit_event(
+        db,
+        "Risk Predicted",
+        vendor_id=batch.vendor_id,
+        batch_id=batch.id,
+        details={
+            "risk_score": prediction_result.risk_score,
+            "risk_level": prediction_result.risk_level.value,
+        },
+        commit=False,
+    )
+    if kimi_analysis.kimi_status.value == "SUCCESS":
+        record_audit_event(
+            db,
+            "Kimi Assessment Generated",
+            vendor_id=batch.vendor_id,
+            batch_id=batch.id,
+            details={"assessment_available": bool(kimi_analysis.summary)},
+            commit=False,
+        )
     db.commit()
 
     return BatchPredictRiskResponse(

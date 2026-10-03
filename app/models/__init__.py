@@ -4,6 +4,7 @@ from app.models.raw_material import RawMaterial
 from app.models.batch import Batch
 from app.models.document import Document
 from app.models.intelligence import BatchIntelligence
+from app.models.decision import AuditEvent, BatchDecision, EmailEvent
 
 __all__ = [
     "Base",
@@ -12,4 +13,7 @@ __all__ = [
     "Batch",
     "Document",
     "BatchIntelligence",
+    "BatchDecision",
+    "EmailEvent",
+    "AuditEvent",
 ]

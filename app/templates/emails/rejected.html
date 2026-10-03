@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:32px 12px;background:#f3f6fa;color:#182230;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e3e9f0;border-radius:12px;">
+      <tr><td style="padding:28px 32px 18px;border-bottom:1px solid #edf0f4;">
+        <div style="font-size:21px;font-weight:700;color:#153a66;">VendorIQ</div>
+        <div style="margin-top:20px;"><span style="display:inline-block;padding:7px 12px;border-radius:20px;background:#fdebea;color:#a6312b;font-size:12px;font-weight:700;letter-spacing:.5px;">REJECTED</span></div>
+        <h1 style="margin:14px 0 4px;font-size:23px;line-height:1.3;">Batch {{ batch_number }} assessment result</h1>
+        <p style="margin:0;color:#627083;font-size:14px;">{{ vendor_name }} · {{ material }}</p>
+      </td></tr>
+      <tr><td style="padding:22px 32px;">
+        <p style="margin:0;color:#425166;font-size:14px;line-height:1.6;">{{ reason }}</p>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:16px;font-size:14px;">
+          <tr><td style="padding:8px 0;color:#627083;">Risk score</td><td align="right" style="padding:8px 0;font-weight:600;">{{ risk_score }}</td></tr>
+          <tr><td style="padding:8px 0;color:#627083;">Risk level</td><td align="right" style="padding:8px 0;font-weight:600;">{{ risk_level }}</td></tr>
+        </table>
+        <h2 style="margin:22px 0 8px;font-size:16px;">Primary issues</h2>
+        <ul style="margin:0;padding-left:20px;color:#425166;font-size:14px;line-height:1.8;">
+          {% for issue in primary_issues %}<li>{{ issue }}</li>{% endfor %}
+          {% if not primary_issues %}<li>{{ reason }}</li>{% endif %}
+        </ul>
+        <h2 style="margin:22px 0 8px;font-size:16px;">Failed checks</h2>
+        <ul style="margin:0;padding-left:20px;color:#425166;font-size:14px;line-height:1.8;">
+          {% for name, result in validation_results.items() %}{% if (result is mapping and result.get('passed') == false) or result is sameas false %}<li>{{ name }}</li>{% endif %}{% endfor %}
+          {% if not validation_results %}<li>See the assessment details above.</li>{% endif %}
+        </ul>
+        <h2 style="margin:22px 0 8px;font-size:16px;">AI assessment</h2>
+        <p style="margin:0;color:#425166;font-size:14px;line-height:1.6;">{{ kimi_summary or reason }}</p>
+        <h2 style="margin:22px 0 8px;font-size:16px;">Required actions</h2>
+        <ul style="margin:0;padding-left:20px;color:#425166;font-size:14px;line-height:1.8;">{% for action in recommended_actions %}<li>{{ action }}</li>{% endfor %}</ul>
+        <p style="margin:18px 0 0;color:#718096;font-size:12px;">Reference {{ reference_id }} · {{ timestamp }}</p>
+      </td></tr>
+      <tr><td style="padding:18px 32px;background:#f8fafc;border-radius:0 0 12px 12px;color:#718096;font-size:12px;">VendorIQ · Supplier qualification and batch intelligence<br>For assistance, contact your company’s supplier quality team.</td></tr>
+    </table>
+  </body>
+</html>

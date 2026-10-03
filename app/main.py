@@ -6,6 +6,9 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.api.routes.health import router as health_router
 from app.api.routes.batches import router as batches_router
+from app.api.routes.decisions import email_router as email_events_router
+from app.api.routes.decisions import router as decisions_router
+from app.models import AuditEvent, BatchDecision, EmailEvent
 
 # Configure logging
 logging.basicConfig(
@@ -37,6 +40,8 @@ app.include_router(health_router)
 
 # API routers under /api
 app.include_router(batches_router, prefix=settings.API_PREFIX)
+app.include_router(decisions_router, prefix=settings.API_PREFIX)
+app.include_router(email_events_router, prefix=settings.API_PREFIX)
 
 
 @app.on_event("startup")
