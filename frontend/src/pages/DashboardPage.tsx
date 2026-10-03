@@ -206,35 +206,103 @@ export const DashboardPage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. Vendor Risk Distribution */}
         <div className="v-card p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-2">
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Vendor Risk Distribution</h3>
               <p className="text-xs text-slate-500">Breakdown of supplier portfolio risk tiers</p>
             </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100/80 text-slate-700 text-xs font-semibold border border-slate-200/60">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>
+                {(analytics.vendor_risk_distribution || []).reduce((sum, item) => sum + (item.value || 0), 0)} Suppliers
+              </span>
+            </div>
           </div>
-          <div className="h-64 w-full">
+
+          <div className="relative h-60 w-full flex items-center justify-center mt-1">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={analytics.vendor_risk_distribution || []}
                   cx="50%"
                   cy="50%"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={4}
+                  innerRadius={65}
+                  outerRadius={92}
+                  paddingAngle={(analytics.vendor_risk_distribution || []).some((item) => (item.value || 0) > 0) ? 3 : 0}
+                  cornerRadius={4}
                   dataKey="value"
+                  stroke="#ffffff"
+                  strokeWidth={2}
                 >
                   {(analytics.vendor_risk_distribution || []).map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
                 <Tooltip
-                  formatter={(value: any) => [`${value} Vendors`, 'Count']}
-                  contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
+                  formatter={(value: any, name: any) => {
+                    const total = (analytics.vendor_risk_distribution || []).reduce(
+                      (sum, item) => sum + (item.value || 0),
+                      0
+                    );
+                    const pct = total > 0 ? Math.round((Number(value) / total) * 100) : 0;
+                    return [`${value} Vendors (${pct}%)`, name];
+                  }}
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    borderRadius: '10px',
+                    border: '1px solid #1e293b',
+                    color: '#fff',
+                    fontSize: '12px',
+                    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)',
+                    padding: '8px 12px',
+                  }}
+                  itemStyle={{ color: '#f8fafc', fontWeight: 500 }}
                 />
-                <Legend verticalAlign="bottom" height={36} iconType="circle" />
               </PieChart>
             </ResponsiveContainer>
+
+            {/* Centered Total Display in the Donut Hole */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none pb-1">
+              <span className="text-3xl font-extrabold text-slate-900 tracking-tight">
+                {(analytics.vendor_risk_distribution || []).reduce((sum, item) => sum + (item.value || 0), 0)}
+              </span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mt-0.5">
+                Total Vendors
+              </span>
+            </div>
+          </div>
+
+          {/* Structured Modern Legend Grid */}
+          <div className="grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-slate-100">
+            {(analytics.vendor_risk_distribution || []).map((item, idx) => {
+              const total = (analytics.vendor_risk_distribution || []).reduce(
+                (sum, it) => sum + (it.value || 0),
+                0
+              );
+              const pct = total > 0 ? Math.round((item.value / total) * 100) : 0;
+              return (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-50/80 hover:bg-slate-100/90 transition-colors border border-slate-100"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="text-xs font-medium text-slate-700 truncate" title={item.name}>
+                      {item.name.replace(' Risk', '')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0 pl-1.5">
+                    <span className="text-xs font-bold text-slate-900">{item.value}</span>
+                    <span className="text-[10px] font-semibold text-slate-500 bg-white px-1.5 py-0.5 rounded border border-slate-200/70">
+                      {pct}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
