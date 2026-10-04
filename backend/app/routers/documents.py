@@ -11,10 +11,12 @@ from sqlalchemy import desc
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.security import get_optional_current_user
 from app.core.errors import NotFoundError
 from app.models.document import Document
 from app.models.batch import Batch
 from app.models.vendor import Vendor
+from app.models.user import User
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -26,9 +28,12 @@ def list_documents(
     document_type: Optional[str] = Query(None, description="Filter by document type (COA, SDS, GMP, etc.)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ):
     query = db.query(Document)
+    if current_user and current_user.company_id:
+        query = query.filter(Document.company_id == current_user.company_id)
     if batch_id:
         query = query.filter(Document.batch_id == batch_id)
     if vendor_id:
@@ -80,9 +85,10 @@ async def upload_document(
     document_type: str = Query("OTHER"),
     batch_id: Optional[UUID] = Query(None),
     vendor_id: Optional[UUID] = Query(None),
+    current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ):
-    upload_dir = settings.UPLOAD_DIR
+    upload_dir = os.path.join(settings.UPLOAD_DIR, "documents")
     os.makedirs(upload_dir, exist_ok=True)
     clean_filename = f"{uuid.uuid4()[:8]}_{file.filename}"
     file_path = os.path.join(upload_dir, clean_filename)
@@ -91,7 +97,18 @@ async def upload_document(
     with open(file_path, "wb") as f:
         f.write(contents)
 
+    target_company_id = current_user.company_id if current_user else None
+    if not target_company_id and vendor_id:
+        v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
+        if v:
+            target_company_id = v.company_id
+    elif not target_company_id and batch_id:
+        b = db.query(Batch).filter(Batch.id == batch_id).first()
+        if b:
+            target_company_id = b.company_id
+
     doc = Document(
+        company_id=target_company_id,
         batch_id=batch_id,
         vendor_id=vendor_id,
         file_name=file.filename,
@@ -99,6 +116,7 @@ async def upload_document(
         document_type=document_type.upper(),
         mime_type=file.content_type or "application/octet-stream",
         file_size=len(contents),
+        uploaded_by=current_user.id if current_user else None,
         processing_status="UPLOADED",
     )
     db.add(doc)
@@ -128,54 +146,13 @@ async def upload_document(
     db.add(doc)
     db.commit()
 
-    # If associated with a batch, auto-run validation and risk prediction
+    # If associated with a batch, auto-run complete qualification pipeline & update genuine analytics
     if batch_id:
         try:
             batch = db.query(Batch).filter(Batch.id == batch_id).first()
             if batch:
-                if dt_enum == DocTypeEnum.COA and proc_result.extracted_data.get("purity") is not None:
-                    if batch.purity_reported is None:
-                        batch.purity_reported = proc_result.extracted_data.get("purity")
-
-                from app.services.validation_service import BatchValidationService
-                from app.services.vendor_history_service import VendorHistoryService
-                from app.services.prediction_service import BatchRiskPredictionService
-                from app.services.kimi_service import KimiReasoningService
-                from app.models.intelligence import BatchIntelligence
-                from app.models.raw_material import RawMaterial
-
-                material = db.query(RawMaterial).filter(RawMaterial.id == batch.raw_material_id).first()
-                vendor = batch.vendor
-
-                val_svc = BatchValidationService()
-                hist_svc = VendorHistoryService()
-                pred_svc = BatchRiskPredictionService()
-                kimi_svc = KimiReasoningService()
-
-                batch_docs = db.query(Document).filter(Document.batch_id == batch.id).all()
-                proc_docs = [
-                    proc_result if d.id == doc.id else doc_svc.process_document(d.file_path, d.filename, dt_enum, d.id)
-                    for d in batch_docs
-                ]
-
-                val_res = val_svc.validate_batch(batch, material, vendor, proc_docs)
-                v_hist = hist_svc.analyze_vendor_history(db, batch.vendor_id, batch)
-                pred_res, feat = pred_svc.predict_risk(batch, material, vendor, val_res, v_hist, batch.purity_reported)
-                kimi_res = kimi_svc.generate_explanation(vendor, material, batch, val_res, v_hist, pred_res)
-
-                intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
-                if not intel:
-                    intel = BatchIntelligence(batch_id=batch.id)
-                    db.add(intel)
-
-                intel.validation_result = val_res.model_dump(mode="json")
-                intel.vendor_history = v_hist.model_dump(mode="json")
-                intel.ml_features = feat
-                intel.ml_prediction = pred_res.model_dump(mode="json")
-                intel.kimi_analysis = kimi_res.model_dump(mode="json")
-                intel.kimi_status = kimi_res.kimi_status.value
-                batch.status = "PROCESSING"
-                db.commit()
+                from app.services.pipeline_service import run_full_batch_pipeline
+                run_full_batch_pipeline(db, batch)
         except Exception:
             pass
 

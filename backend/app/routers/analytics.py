@@ -1,15 +1,18 @@
 """
 Analytics and Dashboard router for VendorIQ.
-Aggregates live database statistics for KPI cards, risk distribution, trends, and risk tables.
-All numbers come directly from live database tables.
+Aggregates database statistics for KPI cards, risk distribution, trends, and risk tables with caching.
 """
+import time
+from typing import Optional, Dict, Any
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
 from app.core.database import get_db
+from app.core.security import get_optional_current_user
+from app.models.user import User
 from app.models.vendor import Vendor
 from app.models.batch import Batch
 from app.models.intelligence import BatchIntelligence
@@ -17,36 +20,71 @@ from app.models.decision import EmailEvent
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
+# High-performance per-company in-memory cache (15-second TTL)
+_ANALYTICS_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_TTL_SECONDS = 15.0
+
+
+def invalidate_analytics_cache(company_id: Optional[Any] = None):
+    """Call when new batch or prediction is persisted to bust analytics cache."""
+    if company_id:
+        _ANALYTICS_CACHE.pop(str(company_id), None)
+    else:
+        _ANALYTICS_CACHE.clear()
+
 
 @router.get("")
-def get_dashboard_analytics(db: Session = Depends(get_db)):
+def get_dashboard_analytics(
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Returns full analytics payload for the Vendor Intelligence Dashboard:
     KPI cards, 4 charts (Risk Distribution, Risk Trend, Batch Approval Trend, Quality Trend),
     and tables for High Risk Vendors and Recent Batch Assessments.
+    Strictly scoped to current_user.company_id for multi-tenant isolation.
     """
-    # 1. KPI Counts
-    total_vendors = db.query(Vendor).filter(Vendor.deleted_at.is_(None)).count()
-    all_batches = db.query(Batch).all()
-    batches_processed = sum(
-        1 for b in all_batches
-        if b.status in ["APPROVED", "REJECTED", "NEEDS_REVIEW", "PROCESSING", "VALIDATED", "PREDICTED"]
-    )
-    approved_batches = sum(1 for b in all_batches if b.status == "APPROVED")
-    rejected_batches = sum(1 for b in all_batches if b.status == "REJECTED")
+    company_id_str = str(current_user.company_id) if current_user and current_user.company_id else "global"
+    now = time.monotonic()
+    cached = _ANALYTICS_CACHE.get(company_id_str)
+    if cached and (now - cached["timestamp"] < _CACHE_TTL_SECONDS):
+        return cached["data"]
+
+    # 1. KPI Counts via fast SQL aggregations scoped to company
+    vendor_count_q = db.query(func.count(Vendor.id)).filter(Vendor.deleted_at.is_(None))
+    batch_count_q = db.query(Batch.status, func.count(Batch.id))
+
+    if current_user and current_user.company_id:
+        vendor_count_q = vendor_count_q.filter(Vendor.company_id == current_user.company_id)
+        batch_count_q = batch_count_q.filter(Batch.company_id == current_user.company_id)
+
+    total_vendors = vendor_count_q.scalar() or 0
+    batch_counts = dict(batch_count_q.group_by(Batch.status).all())
+
+    approved_batches = batch_counts.get("APPROVED", 0)
+    rejected_batches = batch_counts.get("REJECTED", 0)
     pending_reviews = sum(
-        1 for b in all_batches
-        if b.status in ["NEEDS_REVIEW", "RECEIVED", "PENDING", "PROCESSING"]
+        batch_counts.get(s, 0)
+        for s in ["NEEDS_REVIEW", "RECEIVED", "PENDING", "PROCESSING"]
+    )
+    batches_processed = sum(
+        batch_counts.get(s, 0)
+        for s in ["APPROVED", "REJECTED", "NEEDS_REVIEW", "PROCESSING", "VALIDATED", "PREDICTED", "EVALUATED"]
     )
 
-    vendors = db.query(Vendor).filter(Vendor.deleted_at.is_(None)).all()
-    scored_vendor_rows = (
+    vendor_list_q = db.query(Vendor).filter(Vendor.deleted_at.is_(None))
+    scored_vendor_q = (
         db.query(Batch.vendor_id, BatchIntelligence.ml_prediction)
         .join(BatchIntelligence, BatchIntelligence.batch_id == Batch.id)
         .filter(BatchIntelligence.ml_prediction.isnot(None))
-        .order_by(desc(BatchIntelligence.created_at))
-        .all()
     )
+
+    if current_user and current_user.company_id:
+        vendor_list_q = vendor_list_q.filter(Vendor.company_id == current_user.company_id)
+        scored_vendor_q = scored_vendor_q.filter(Batch.company_id == current_user.company_id)
+
+    vendors = vendor_list_q.all()
+    scored_vendor_rows = scored_vendor_q.order_by(desc(BatchIntelligence.created_at)).all()
     vendor_risk_scores = {}
     for vendor_id, prediction in scored_vendor_rows:
         if vendor_id not in vendor_risk_scores and prediction and prediction.get("risk_score") is not None:
@@ -67,7 +105,7 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
         {"name": "Critical Risk (>75)", "value": risk_critical, "color": "#ef4444"},
     ]
 
-    # Trends are derived from stored batches and their persisted intelligence records.
+    # Trends: dynamically computed over the last 6 months
     today = date.today()
     months = []
     year, month = today.year, today.month
@@ -83,17 +121,42 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
             year += 1
             month = 1
 
+    start_yr, start_mo = months[0]
+    trend_start_dt = datetime(start_yr, start_mo, 1, tzinfo=timezone.utc)
+
+    # Only load batches created in the trend window with selective column projection
+    trend_batches_q = (
+        db.query(Batch.id, Batch.status, Batch.created_at, Batch.purity_reported)
+        .filter(Batch.created_at >= trend_start_dt)
+    )
+    if current_user and current_user.company_id:
+        trend_batches_q = trend_batches_q.filter(Batch.company_id == current_user.company_id)
+    trend_batches = trend_batches_q.all()
+
     batch_by_month = defaultdict(list)
-    for batch in all_batches:
+    for batch in trend_batches:
         if batch.created_at:
             batch_by_month[(batch.created_at.year, batch.created_at.month)].append(batch)
 
-    intelligence_by_batch = {
-        row.batch_id: row
-        for row in db.query(BatchIntelligence).filter(
-            BatchIntelligence.batch_id.in_([batch.id for batch in all_batches])
-        ).all()
-    } if all_batches else {}
+    # Fetch recent batches table (10 latest batches)
+    recent_batches_q = (
+        db.query(Batch)
+        .options(joinedload(Batch.vendor), joinedload(Batch.raw_material))
+        .order_by(desc(Batch.created_at))
+    )
+    if current_user and current_user.company_id:
+        recent_batches_q = recent_batches_q.filter(Batch.company_id == current_user.company_id)
+    recent_batches = recent_batches_q.limit(10).all()
+
+    batch_ids_for_intel = list({b.id for b in trend_batches} | {b.id for b in recent_batches if b.id})
+    intelligence_by_batch = {}
+    if batch_ids_for_intel:
+        intels = (
+            db.query(BatchIntelligence)
+            .filter(BatchIntelligence.batch_id.in_(batch_ids_for_intel))
+            .all()
+        )
+        intelligence_by_batch = {row.batch_id: row for row in intels}
 
     risk_trend = []
     batch_approval_trend = []
@@ -133,7 +196,6 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
             "compliance_rate": round(sum(month_compliance) / len(month_compliance) * 100, 2) if month_compliance else None,
         })
 
-    # 4. Tables
     # High Risk Vendors Table
     high_risk_vendors_table = []
     for v in sorted(vendors, key=lambda x: vendor_risk_scores.get(x.id, -1), reverse=True):
@@ -150,16 +212,6 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
                 "status": v.status,
             })
 
-    # Recent Batch Assessments Table
-    recent_batches_table = []
-    recent_batches = (
-        db.query(Batch)
-        .options(joinedload(Batch.vendor), joinedload(Batch.raw_material))
-        .order_by(desc(Batch.created_at))
-        .limit(10)
-        .all()
-    )
-
     recent_batch_ids = [b.id for b in recent_batches if b.id]
     recent_emails = {}
     if recent_batch_ids:
@@ -173,6 +225,7 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
             if em.batch_id not in recent_emails:
                 recent_emails[em.batch_id] = em
 
+    recent_batches_table = []
     for b in recent_batches:
         intel = intelligence_by_batch.get(b.id)
         pred = intel.ml_prediction if (intel and intel.ml_prediction) else {}
@@ -197,7 +250,7 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
             "created_at": b.created_at.isoformat() if b.created_at else None,
         })
 
-    return {
+    payload = {
         "kpis": {
             "total_vendors": total_vendors,
             "batches_processed": batches_processed,
@@ -217,3 +270,10 @@ def get_dashboard_analytics(db: Session = Depends(get_db)):
             "recent_batch_assessments": recent_batches_table,
         }
     }
+
+    _ANALYTICS_CACHE[company_id_str] = {
+        "data": payload,
+        "timestamp": time.monotonic(),
+    }
+    return payload
+

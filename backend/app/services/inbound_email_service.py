@@ -277,55 +277,13 @@ def ingest_message(db: Session, raw_message: bytes, message_uid: str) -> tuple[i
         except Exception:
             pass
 
-        # Trigger batch intelligence & risk prediction
+        # Trigger complete automated qualification pipeline & update genuine analytics
         try:
-            from app.services.validation_service import BatchValidationService
-            from app.services.vendor_history_service import VendorHistoryService
-            from app.services.prediction_service import BatchRiskPredictionService
-            from app.services.kimi_service import KimiReasoningService
-            from app.models.intelligence import BatchIntelligence
-            from app.models.raw_material import RawMaterial
-
-            material = db.query(RawMaterial).filter(RawMaterial.id == batch.raw_material_id).first()
-            vendor = db.query(Vendor).filter(Vendor.id == batch.vendor_id).first()
-
-            val_svc = BatchValidationService()
-            hist_svc = VendorHistoryService()
-            pred_svc = BatchRiskPredictionService()
-            kimi_svc = KimiReasoningService()
-
-            batch_docs = db.query(Document).filter(Document.batch_id == batch.id).all()
-            proc_results = [
-                DocumentProcessResult(
-                    document_id=d.id,
-                    filename=d.file_name,
-                    document_type=DocumentType(d.document_type) if d.document_type in DocumentType.__members__ else DocumentType.OTHER,
-                    status=d.processing_status,
-                    extracted_data=d.extracted_data or {},
-                )
-                for d in batch_docs
-            ]
-
-            val_res = val_svc.validate_batch(batch, material, vendor, proc_results)
-            v_hist = hist_svc.analyze_vendor_history(db, batch.vendor_id, batch)
-            pred_res, feat = pred_svc.predict_risk(batch, material, vendor, val_res, v_hist, batch.purity_reported)
-            kimi_res = kimi_svc.generate_explanation(vendor, material, batch, val_res, v_hist, pred_res)
-
-            intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
-            if not intel:
-                intel = BatchIntelligence(batch_id=batch.id)
-                db.add(intel)
-            intel.validation_result = val_res.model_dump(mode="json")
-            intel.vendor_history = v_hist.model_dump(mode="json")
-            intel.ml_features = feat
-            intel.ml_prediction = pred_res.model_dump(mode="json")
-            intel.kimi_analysis = kimi_res.model_dump(mode="json")
-            intel.kimi_status = kimi_res.kimi_status.value
-            batch.status = "PROCESSING"
-            db.commit()
-            logger.info("Automatically generated batch intelligence & risk prediction for batch %s", batch.batch_number)
+            from app.services.pipeline_service import run_full_batch_pipeline
+            run_full_batch_pipeline(db, batch)
+            logger.info("Automatically executed batch qualification pipeline for batch %s", batch.batch_number)
         except Exception as exc:
-            logger.warning("Auto risk prediction after email ingestion failed for batch %s: %s", batch.batch_number, exc)
+            logger.warning("Pipeline execution after email ingestion failed for batch %s: %s", batch.batch_number, exc)
 
         logger.info(
             "Ingested %s PDF attachment(s) from inbound email UID %s for batch %s",

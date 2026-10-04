@@ -5,6 +5,7 @@ Main FastAPI Application Entrypoint (Unified Backend)
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from app.core.config import settings
 from app.core.errors import setup_exception_handlers
 from app.core.database import get_engine, Base
@@ -29,6 +30,9 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+# Centralized Gzip response compression for fast API transport
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Configure centralized error handling
 setup_exception_handlers(app)
@@ -109,3 +113,4 @@ app.include_router(analytics_router, prefix=settings.API_V1_STR)
 app.include_router(alerts_router, prefix=settings.API_V1_STR)
 app.include_router(email_events_router, prefix=settings.API_V1_STR)
 app.include_router(settings_router, prefix=settings.API_V1_STR)
+

@@ -3,7 +3,7 @@ SQLAlchemy database setup and session management for VendorIQ.
 Compatible with PostgreSQL (Neon Serverless PostgreSQL) and SQLite fallback for local testing.
 """
 from typing import Generator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from app.core.config import settings
 
@@ -16,7 +16,7 @@ SessionLocal = None
 
 
 def get_engine():
-    """Lazily initialize and return the SQLAlchemy engine."""
+    """Lazily initialize and return the SQLAlchemy engine with optimized connection settings."""
     global engine, SessionLocal
     if engine is None:
         db_url = settings.sync_database_url
@@ -26,6 +26,9 @@ def get_engine():
         else:
             engine_kwargs["pool_pre_ping"] = True
             engine_kwargs["pool_recycle"] = 60
+            engine_kwargs["pool_size"] = 15
+            engine_kwargs["max_overflow"] = 25
+            engine_kwargs["pool_timeout"] = 30
             engine_kwargs["connect_args"] = {
                 "keepalives": 1,
                 "keepalives_idle": 30,
@@ -34,6 +37,22 @@ def get_engine():
             }
 
         engine = create_engine(db_url, **engine_kwargs)
+
+        # Performance tuning for SQLite: WAL mode, synchronous=NORMAL, 64MB cache
+        if db_url.startswith("sqlite"):
+            @event.listens_for(engine, "connect")
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                try:
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                    cursor.execute("PRAGMA synchronous=NORMAL")
+                    cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+                    cursor.execute("PRAGMA foreign_keys=ON")
+                except Exception:
+                    pass
+                finally:
+                    cursor.close()
+
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     return engine
 

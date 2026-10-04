@@ -19,6 +19,7 @@ import {
   FileText,
   FileCheck2,
   Check,
+  UserPlus,
 } from 'lucide-react';
 import { vendorApi, batchApi } from '../api/client';
 import { Vendor, Batch } from '../types';
@@ -29,6 +30,17 @@ export const VendorsPage: React.FC = () => {
   const [riskFilter, setRiskFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [activeTab, setActiveTab] = useState<'directory' | 'emails'>('directory');
+
+  // Invite Vendor via Email State
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteFormData, setInviteFormData] = useState({
+    name: '',
+    contact_email: '',
+    contact_name: '',
+    category: '',
+    notes: '',
+  });
+  const [inviteStatus, setInviteStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // New Vendor Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -87,6 +99,51 @@ export const VendorsPage: React.FC = () => {
       });
     },
   });
+
+  const inviteVendorMutation = useMutation({
+    mutationFn: (data: typeof inviteFormData) =>
+      vendorApi.invite({
+        vendor_name: data.name,
+        email: data.contact_email,
+        contact_name: data.contact_name,
+        supplier_category: data.category,
+        notes: data.notes,
+      }),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['vendors'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] });
+      setInviteStatus({
+        type: 'success',
+        message: res.message || `Onboarding email dispatched to supplier!`,
+      });
+      setTimeout(() => {
+        setIsInviteModalOpen(false);
+        setInviteStatus(null);
+        setInviteFormData({ name: '', contact_email: '', contact_name: '', category: '', notes: '' });
+      }, 2500);
+    },
+    onError: (err: any) => {
+      setInviteStatus({
+        type: 'error',
+        message: err.response?.data?.detail || err.message || 'Failed to dispatch invitation email. Check Google SMTP configuration.',
+      });
+    },
+  });
+
+  const updateStatusMutation = useMutation({
+    mutationFn: ({ vendorId, isActive, statusLabel }: { vendorId: string; isActive: boolean; statusLabel?: string }) =>
+      vendorApi.updateStatus(vendorId, isActive, statusLabel),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vendors'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] });
+    },
+  });
+
+  const handleInviteSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteFormData.name || !inviteFormData.contact_email) return;
+    inviteVendorMutation.mutate(inviteFormData);
+  };
 
   // Document Request Email Mutation
   const sendEmailMutation = useMutation({
@@ -218,7 +275,11 @@ export const VendorsPage: React.FC = () => {
             <RefreshCw className="w-4 h-4 mr-1.5" />
             <span>Sync</span>
           </button>
-          <button onClick={() => setIsAddModalOpen(true)} className="btn-primary">
+          <button onClick={() => setIsInviteModalOpen(true)} className="btn-primary bg-indigo-600 hover:bg-indigo-700">
+            <Mail className="w-4 h-4 mr-1.5" />
+            <span>Invite via Email</span>
+          </button>
+          <button onClick={() => setIsAddModalOpen(true)} className="btn-secondary">
             <Plus className="w-4 h-4 mr-1.5" />
             <span>Add Supplier</span>
           </button>
@@ -320,9 +381,38 @@ export const VendorsPage: React.FC = () => {
                   </tr>
                 ) : filteredVendors.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="text-center py-12 text-slate-500">
-                      <Building2 className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                      <p className="text-sm font-medium text-slate-700">No vendors found</p>
+                    <td colSpan={8} className="text-center py-12 px-4">
+                      <div className="max-w-md mx-auto text-center space-y-3">
+                        <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto shadow-sm">
+                          <Building2 className="w-6 h-6" />
+                        </div>
+                        <h3 className="text-base font-bold text-slate-900">
+                          {vendorList.length === 0 ? 'No suppliers registered yet' : 'No matching suppliers found'}
+                        </h3>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          {vendorList.length === 0
+                            ? 'Suppliers interact with VendorIQ 100% via email — no vendor login or portal required. Invite your raw material suppliers to request their Certificates of Analysis (COAs), SDS sheets, and GMP compliance records.'
+                            : 'Try adjusting your search criteria or risk tier filters.'}
+                        </p>
+                        {vendorList.length === 0 && (
+                          <div className="flex items-center justify-center gap-3 pt-2">
+                            <button
+                              onClick={() => setIsInviteModalOpen(true)}
+                              className="btn-primary bg-indigo-600 hover:bg-indigo-700 text-xs"
+                            >
+                              <Mail className="w-3.5 h-3.5 mr-1.5" />
+                              <span>Invite Supplier via Email</span>
+                            </button>
+                            <button
+                              onClick={() => setIsAddModalOpen(true)}
+                              className="btn-secondary text-xs"
+                            >
+                              <Plus className="w-3.5 h-3.5 mr-1" />
+                              <span>Add Manually</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ) : (
@@ -384,23 +474,48 @@ export const VendorsPage: React.FC = () => {
                         </span>
                       </td>
                       <td>
-                        <span className={`badge ${vendor.status === 'ACTIVE' ? 'badge-approved' : 'badge-pending'}`}>
-                          {vendor.status}
-                        </span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={`badge ${vendor.status === 'ACTIVE' ? 'badge-approved' : 'badge-pending'}`}>
+                            {vendor.status}
+                          </span>
+                          {vendor.invitation_status && (
+                            <span className="text-[10px] font-mono uppercase text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded">
+                              {vendor.invitation_status}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => handleOpenEmailModal(vendor)}
-                            className="btn-secondary text-xs py-1 px-2.5 flex items-center gap-1 border-blue-200 text-blue-700 hover:bg-blue-50"
+                            className="btn-secondary text-xs py-1 px-2 flex items-center gap-1 border-blue-200 text-blue-700 hover:bg-blue-50"
                             title="Send batch document request email"
                           >
                             <Mail className="w-3.5 h-3.5" />
                             <span>Request Docs</span>
                           </button>
+                          <button
+                            onClick={() =>
+                              updateStatusMutation.mutate({
+                                vendorId: vendor.id,
+                                isActive: vendor.status !== 'ACTIVE',
+                                statusLabel: vendor.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE',
+                              })
+                            }
+                            disabled={updateStatusMutation.isPending}
+                            className={`text-xs px-2 py-1 rounded font-medium border transition-colors ${
+                              vendor.status === 'ACTIVE'
+                                ? 'text-slate-500 hover:text-rose-600 hover:border-rose-200 bg-white border-slate-200'
+                                : 'text-emerald-700 hover:bg-emerald-50 border-emerald-300 bg-emerald-50/60'
+                            }`}
+                            title={vendor.status === 'ACTIVE' ? 'Deactivate supplier' : 'Activate supplier'}
+                          >
+                            {vendor.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                          </button>
                           <Link
                             to={`/vendors/${vendor.id}`}
-                            className="btn-ghost text-xs text-slate-600 font-semibold"
+                            className="btn-ghost text-xs text-slate-600 font-semibold px-1.5"
                           >
                             Profile
                           </Link>
@@ -797,6 +912,130 @@ export const VendorsPage: React.FC = () => {
                   className="btn-primary"
                 >
                   {createVendorMutation.isPending ? 'Saving...' : 'Register Vendor'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Invite Vendor via Email Modal */}
+      {isInviteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in duration-150">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <Mail className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Invite Supplier via Email</h3>
+                  <p className="text-[11px] text-slate-500">All interactions take place 100% via email</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsInviteModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleInviteSubmit} className="p-6 space-y-4">
+              {inviteStatus && (
+                <div
+                  className={`p-3.5 rounded-lg text-xs font-medium flex items-center gap-2 ${
+                    inviteStatus.type === 'success'
+                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border border-rose-200 text-rose-800'
+                  }`}
+                >
+                  {inviteStatus.type === 'success' ? (
+                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  )}
+                  <span>{inviteStatus.message}</span>
+                </div>
+              )}
+
+              <div className="p-3 rounded-lg bg-indigo-50/70 border border-indigo-100 text-xs text-indigo-900 leading-relaxed">
+                <strong>Email-Only Architecture:</strong> The supplier does not need an account or portal. They will receive an email requesting their COA, SDS, and compliance specifications. When they reply with PDF attachments, VendorIQ ingests and verifies them automatically.
+              </div>
+
+              <div>
+                <label className="form-label">Supplier / Company Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={inviteFormData.name}
+                  onChange={(e) => setInviteFormData({ ...inviteFormData, name: e.target.value })}
+                  placeholder="e.g. Apex BioSciences Ltd"
+                  className="form-input"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="form-label">Contact Email *</label>
+                  <input
+                    type="email"
+                    required
+                    value={inviteFormData.contact_email}
+                    onChange={(e) => setInviteFormData({ ...inviteFormData, contact_email: e.target.value })}
+                    placeholder="quality@supplier.com"
+                    className="form-input"
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Contact Person Name</label>
+                  <input
+                    type="text"
+                    value={inviteFormData.contact_name}
+                    onChange={(e) => setInviteFormData({ ...inviteFormData, contact_name: e.target.value })}
+                    placeholder="e.g. Sarah Jenkins"
+                    className="form-input"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="form-label">Material Category / Supplied Products</label>
+                <input
+                  type="text"
+                  value={inviteFormData.category}
+                  onChange={(e) => setInviteFormData({ ...inviteFormData, category: e.target.value })}
+                  placeholder="e.g. Hyaluronic Acid, Niacinamide, Glycerin"
+                  className="form-input"
+                />
+              </div>
+
+              <div>
+                <label className="form-label">Additional Instructions / Requirements</label>
+                <textarea
+                  rows={2}
+                  value={inviteFormData.notes}
+                  onChange={(e) => setInviteFormData({ ...inviteFormData, notes: e.target.value })}
+                  placeholder="e.g. Please attach latest HPLC assay purity certificates and cleanroom ISO 9001 certs."
+                  className="form-input text-xs"
+                />
+              </div>
+
+              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsInviteModalOpen(false)}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={inviteVendorMutation.isPending || !inviteFormData.name || !inviteFormData.contact_email}
+                  className="btn-primary bg-indigo-600 hover:bg-indigo-700"
+                >
+                  <Send className="w-3.5 h-3.5 mr-1.5" />
+                  {inviteVendorMutation.isPending ? 'Sending Invitation...' : 'Send Invitation Email'}
                 </button>
               </div>
             </form>

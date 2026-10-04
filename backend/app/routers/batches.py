@@ -970,40 +970,12 @@ async def upload_batch_document(
     db.add(doc)
     db.commit()
 
-    # Trigger batch validation and ML risk prediction
+    # Trigger complete automated qualification pipeline and update genuine analytics
     try:
-        material = db.query(RawMaterial).filter(RawMaterial.id == batch.raw_material_id).first()
-        vendor = db.query(Vendor).filter(Vendor.id == batch.vendor_id).first()
-
-        batch_docs = db.query(Document).filter(Document.batch_id == batch.id).all()
-        proc_docs = []
-        for d in batch_docs:
-            try:
-                dt_e = DocumentType(d.document_type)
-            except ValueError:
-                dt_e = DocumentType.OTHER
-            proc_docs.append(document_service.process_document(d.file_path, d.filename, dt_e, d.id))
-
-        val_res = validation_service.validate_batch(batch, material, vendor, proc_docs)
-        v_hist = vendor_history_service.analyze_vendor_history(db, batch.vendor_id, batch)
-        pred_res, feat = prediction_service.predict_risk(batch, material, vendor, val_res, v_hist, batch.purity_reported)
-        kimi_res = kimi_service.generate_explanation(vendor, material, batch, val_res, v_hist, pred_res)
-
-        intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == batch.id).first()
-        if not intel:
-            intel = BatchIntelligence(batch_id=batch.id)
-            db.add(intel)
-
-        intel.validation_result = val_res.model_dump(mode="json")
-        intel.vendor_history = v_hist.model_dump(mode="json")
-        intel.ml_features = feat
-        intel.ml_prediction = pred_res.model_dump(mode="json")
-        intel.kimi_analysis = kimi_res.model_dump(mode="json")
-        intel.kimi_status = kimi_res.kimi_status.value
-        batch.status = "PROCESSING"
-        db.commit()
+        from app.services.pipeline_service import run_full_batch_pipeline
+        run_full_batch_pipeline(db, batch)
     except Exception as exc:
-        logger.warning("Could not auto-generate prediction after batch doc upload: %s", exc)
+        logger.warning("Could not run full batch pipeline after batch doc upload: %s", exc)
 
     return {
         "id": str(doc.id),

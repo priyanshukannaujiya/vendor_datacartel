@@ -18,6 +18,7 @@ from app.models.document import Document
 from app.models.intelligence import BatchIntelligence
 from app.schemas.vendor import (
     VendorCreate,
+    VendorInviteRequest,
     VendorUpdate,
     VendorResponse,
     VendorDetailResponse,
@@ -213,6 +214,209 @@ def create_vendor(
     return resp
 
 
+@router.post("/invite", status_code=status.HTTP_201_CREATED)
+def invite_vendor(
+    data: VendorInviteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Invite a supplier to the VendorIQ Vendor Portal.
+    Generates a secure token, sends a real email with portal link via Google SMTP,
+    and logs the email event and audit trail.
+    """
+    import secrets
+    from app.core.config import settings
+    from app.services.email_service import send_email, EmailDeliveryError
+    from app.services.audit_service import record_audit_event
+    from app.models.decision import EmailEvent
+    from app.models.company import Company
+
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    company_name = company.name if company else "Our Procurement Team"
+
+    clean_email = data.email.lower().strip()
+    clean_name = data.vendor_name.strip()
+
+    # Find existing vendor or create new one
+    vendor = (
+        db.query(Vendor)
+        .filter(
+            Vendor.company_id == current_user.company_id,
+            (Vendor.email == clean_email) | (Vendor.vendor_name == clean_name),
+            Vendor.deleted_at.is_(None),
+        )
+        .first()
+    )
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+
+    if not vendor:
+        vendor = Vendor(
+            company_id=current_user.company_id,
+            vendor_name=clean_name,
+            email=clean_email,
+            contact_name=data.contact_name or clean_name,
+            country=data.country or "Global",
+            supplier_category=data.supplier_category or "Active Raw Material",
+            status="PENDING_ONBOARDING",
+            is_active=True,
+            invitation_token=token,
+            invitation_status="INVITED",
+            invitation_sent_at=now,
+        )
+        db.add(vendor)
+    else:
+        vendor.invitation_token = token
+        vendor.invitation_status = "INVITED"
+        vendor.invitation_sent_at = now
+        if not vendor.email:
+            vendor.email = clean_email
+        if data.contact_name and not vendor.contact_name:
+            vendor.contact_name = data.contact_name
+
+    db.commit()
+    db.refresh(vendor)
+
+    # Generate dedicated Vendor Portal URL
+    portal_url = f"{settings.FRONTEND_URL}/vendor-portal?token={token}"
+
+    email_subject = f"Invitation: VendorIQ Supplier Qualification for {company_name}"
+    email_html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 28px; color: #1e293b; background-color: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0;">
+        <div style="margin-bottom: 24px;">
+            <span style="font-size: 18px; font-weight: 800; color: #2563eb; letter-spacing: -0.5px;">VendorIQ</span>
+            <span style="font-size: 13px; color: #64748b; margin-left: 8px;">&bull; Supplier Qualification Portal</span>
+        </div>
+        <h2 style="font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 0; margin-bottom: 12px;">
+            You have been invited to {company_name}'s Supplier Portal
+        </h2>
+        <p style="font-size: 14px; line-height: 1.6; color: #334155;">
+            Dear {vendor.contact_name or vendor.vendor_name},
+        </p>
+        <p style="font-size: 14px; line-height: 1.6; color: #334155;">
+            <strong>{company_name}</strong> uses VendorIQ to manage raw material compliance, batch certifications (COA, MSDS, GMP), and quality assurance.
+        </p>
+        <p style="font-size: 14px; line-height: 1.6; color: #334155;">
+            Please access your dedicated supplier portal to view assigned ingredients, submit required batch documentation, and track approval status:
+        </p>
+
+        <div style="margin: 32px 0; text-align: center;">
+            <a href="{portal_url}" style="background-color: #2563eb; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">
+                Access Vendor Portal &rarr;
+            </a>
+        </div>
+
+        <div style="background-color: #f8fafc; border-left: 4px solid #3b82f6; padding: 14px 16px; margin-bottom: 24px; border-radius: 0 4px 4px 0;">
+            <h4 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b;">Required for Initial Qualification:</h4>
+            <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #475569; line-height: 1.6;">
+                <li>Certificate of Analysis (COA) for active batches</li>
+                <li>Material Safety Data Sheet (MSDS / SDS)</li>
+                <li>GMP / ISO Quality Certifications (if applicable)</li>
+            </ul>
+        </div>
+
+        <p style="font-size: 12px; color: #64748b; line-height: 1.5;">
+            Direct Link: <a href="{portal_url}" style="color: #2563eb; word-break: break-all;">{portal_url}</a>
+        </p>
+        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+        <p style="font-size: 11px; color: #94a3b8; margin: 0;">
+            This invitation was dispatched securely by VendorIQ on behalf of {company_name}.
+        </p>
+    </div>
+    """
+
+    email_status = "PENDING"
+    try:
+        send_email(
+            recipient=clean_email,
+            subject=email_subject,
+            html_content=email_html,
+            text_content=f"Access your supplier portal at: {portal_url}",
+        )
+        email_status = "SENT"
+    except Exception as exc:
+        email_status = "FAILED"
+
+    # Record email event
+    email_event = EmailEvent(
+        company_id=vendor.company_id,
+        vendor_id=vendor.id,
+        recipient_email=clean_email,
+        subject=email_subject,
+        email_type="VENDOR_PORTAL_INVITATION",
+        status=email_status,
+        provider="GOOGLE_SMTP",
+        html_content=email_html,
+        text_content=f"Access your supplier portal at: {portal_url}",
+    )
+    db.add(email_event)
+    db.commit()
+
+    record_audit_event(
+        db,
+        "Vendor Invited to Portal",
+        company_id=vendor.company_id,
+        vendor_id=vendor.id,
+        details={"recipient": clean_email, "email_status": email_status},
+        commit=True,
+    )
+
+    return {
+        "message": f"Invitation dispatched to {clean_email}",
+        "vendor_id": str(vendor.id),
+        "vendor_name": vendor.vendor_name,
+        "email": clean_email,
+        "invitation_token": token,
+        "invitation_url": portal_url,
+        "email_status": email_status,
+    }
+
+
+@router.patch("/{vendor_id}/status")
+def update_vendor_status(
+    vendor_id: UUID,
+    is_active: bool = Query(..., description="Set active status"),
+    status_label: Optional[str] = Query(None, description="Set status text (e.g. ACTIVE, SUSPENDED, PENDING)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Activate or deactivate a vendor with optional status reason.
+    """
+    vendor = (
+        db.query(Vendor)
+        .filter(
+            Vendor.id == vendor_id,
+            Vendor.company_id == current_user.company_id,
+            Vendor.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not vendor:
+        raise NotFoundError(f"Vendor with ID '{vendor_id}' not found")
+
+    vendor.is_active = is_active
+    if status_label:
+        vendor.status = status_label
+    elif not is_active:
+        vendor.status = "INACTIVE"
+    else:
+        vendor.status = "ACTIVE"
+
+    vendor.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(vendor)
+
+    return {
+        "id": str(vendor.id),
+        "vendor_name": vendor.vendor_name,
+        "is_active": vendor.is_active,
+        "status": vendor.status,
+    }
+
+
 @router.get("/email-directory")
 def get_vendor_email_directory(
     current_user: Optional[User] = Depends(get_optional_current_user),
@@ -220,9 +424,13 @@ def get_vendor_email_directory(
 ):
     """
     Get vendor contact list with email addresses and recent batches
-    for quick document request dispatch.
+    for quick document request dispatch, scoped to the current user's company.
     """
-    vendors = db.query(Vendor).filter(Vendor.deleted_at.is_(None)).all()
+    query = db.query(Vendor).filter(Vendor.deleted_at.is_(None))
+    if current_user and current_user.company_id:
+        query = query.filter(Vendor.company_id == current_user.company_id)
+    vendors = query.all()
+
     results = []
     for v in vendors:
         batches = db.query(Batch).filter(Batch.vendor_id == v.id).order_by(Batch.created_at.desc()).limit(5).all()
@@ -240,7 +448,7 @@ def get_vendor_email_directory(
             "code": v.code,
             "contact_name": v.contact_name or "QA Contact",
             "contact_email": v.contact_email or v.email or "quality@supplier.com",
-            "phone": v.contact_phone,
+            "phone": v.phone,
             "status": v.status,
             "risk_score": v.risk_score,
             "batches": batch_items,

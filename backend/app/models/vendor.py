@@ -44,6 +44,10 @@ class Vendor(Base):
     quality_score = Column(Float, default=98.0, nullable=True)
 
     is_active = Column(Boolean, default=True, nullable=False)
+    invitation_token = Column(String(255), nullable=True, unique=True, index=True)
+    invitation_sent_at = Column(DateTime(timezone=True), nullable=True)
+    invitation_accepted_at = Column(DateTime(timezone=True), nullable=True)
+    invitation_status = Column(String(50), default="NOT_INVITED", nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(

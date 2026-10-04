@@ -12,6 +12,9 @@ import {
   TrendingUp,
   RefreshCw,
   ExternalLink,
+  Mail,
+  Sparkles,
+  Building2,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -178,6 +181,36 @@ export const DashboardPage: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      {/* Onboarding Guide Card when tenant has no data yet */}
+      {analytics.total_vendors === 0 && analytics.batches_processed === 0 && (
+        <div className="v-card p-6 bg-gradient-to-r from-blue-50/70 via-indigo-50/50 to-white border-blue-200 shadow-subtle">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div className="space-y-1.5 max-w-2xl">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Welcome to VendorIQ Intelligence</span>
+              </div>
+              <h2 className="text-lg font-bold text-slate-900">
+                Start Qualifying Raw Material Batches
+              </h2>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                VendorIQ streamlines vendor qualification without requiring suppliers to log into any portal. Suppliers receive document requests via Google SMTP email and can reply with attachments (CoAs, SDS, ISO certifications) that are automatically ingested into your database.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <Link to="/vendors" className="btn-primary bg-indigo-600 hover:bg-indigo-700 text-xs whitespace-nowrap">
+                <Mail className="w-3.5 h-3.5 mr-1.5" />
+                <span>Invite Supplier via Email</span>
+              </Link>
+              <Link to="/batches" className="btn-secondary text-xs whitespace-nowrap">
+                <Boxes className="w-3.5 h-3.5 mr-1.5" />
+                <span>Register Batch Lot</span>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">

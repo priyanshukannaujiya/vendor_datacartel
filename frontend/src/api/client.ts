@@ -23,6 +23,7 @@ const API_BASE_URL = rawBaseUrl.replace(/\/+$/, '');
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -262,6 +263,29 @@ export const authApi = {
       company_name: payload.company_name || response.data?.company?.name,
     };
   },
+
+  forgotPassword: async (email: string): Promise<{ message: string }> => {
+    const response = await apiClient.post('/api/auth/forgot-password', { email });
+    return response.data;
+  },
+
+  resetPassword: async (token: string, newPassword: string): Promise<{ message: string }> => {
+    const response = await apiClient.post('/api/auth/reset-password', {
+      token,
+      new_password: newPassword,
+    });
+    return response.data;
+  },
+
+  updateProfile: async (data: { full_name?: string; email?: string; current_password?: string; new_password?: string }): Promise<User> => {
+    const response = await apiClient.put('/api/auth/profile', data);
+    return response.data;
+  },
+
+  updateCompany: async (data: { name?: string; industry?: string; settings?: any }): Promise<any> => {
+    const response = await apiClient.put('/api/auth/company', data);
+    return response.data;
+  },
 };
 
 // ==================== VENDOR APIS ====================
@@ -289,6 +313,29 @@ export const vendorApi = {
       status: vendorData.status,
     });
     return normalizeVendor(response.data);
+  },
+
+  invite: async (inviteData: {
+    vendor_name: string;
+    email: string;
+    contact_name?: string;
+    country?: string;
+    supplier_category?: string;
+    notes?: string;
+  }): Promise<{ message: string; vendor_id: string; email_status: string }> => {
+    const response = await apiClient.post('/api/vendors/invite', inviteData);
+    return response.data;
+  },
+
+  updateStatus: async (
+    id: string,
+    isActive: boolean,
+    statusLabel?: string
+  ): Promise<{ id: string; vendor_name: string; is_active: boolean; status: string }> => {
+    const response = await apiClient.patch(`/api/vendors/${id}/status`, null, {
+      params: { is_active: isActive, status_label: statusLabel },
+    });
+    return response.data;
   },
 
   update: async (id: string, vendorData: Partial<Vendor>): Promise<Vendor> => {

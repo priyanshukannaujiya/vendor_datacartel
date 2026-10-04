@@ -221,10 +221,31 @@ export const BatchesPage: React.FC = () => {
                 </tr>
               ) : filteredBatches.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-12 text-slate-500">
-                    <Boxes className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                    <p className="text-sm font-medium text-slate-700">No batches found</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Register a new batch or adjust filters.</p>
+                  <td colSpan={8} className="text-center py-16 px-4">
+                    <div className="max-w-md mx-auto text-center space-y-3">
+                      <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto shadow-sm">
+                        <Boxes className="w-6 h-6" />
+                      </div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        {batchList.length === 0 ? 'No batch lots recorded yet' : 'No matching batches found'}
+                      </h3>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        {batchList.length === 0
+                          ? 'Register raw material lots to begin automated COA purity checks, ML risk scoring, and email qualification dispatches to suppliers.'
+                          : 'Try changing your search terms or status filter.'}
+                      </p>
+                      {batchList.length === 0 && (
+                        <div className="pt-2">
+                          <button
+                            onClick={() => setIsAddModalOpen(true)}
+                            className="btn-primary text-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5 mr-1" />
+                            <span>Register First Batch Lot</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (

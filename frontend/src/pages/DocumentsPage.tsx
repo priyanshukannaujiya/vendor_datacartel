@@ -155,10 +155,31 @@ export const DocumentsPage: React.FC = () => {
                 </tr>
               ) : filteredDocs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-slate-500">
-                    <FileText className="w-8 h-8 mx-auto text-slate-300 mb-2" />
-                    <p className="text-sm font-medium text-slate-700">No documents cataloged</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Upload a COA or SDS to begin extraction.</p>
+                  <td colSpan={7} className="text-center py-16 px-4">
+                    <div className="max-w-md mx-auto text-center space-y-3">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto shadow-sm">
+                        <FileText className="w-6 h-6" />
+                      </div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        {docList.length === 0 ? 'No compliance documents cataloged yet' : 'No matching documents found'}
+                      </h3>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        {docList.length === 0
+                          ? 'Documents appear here automatically when suppliers email their Certificates of Analysis (CoAs) and SDS attachments, or when you upload files manually.'
+                          : 'Try adjusting your search query or document type filter.'}
+                      </p>
+                      {docList.length === 0 && (
+                        <div className="pt-2">
+                          <button
+                            onClick={() => setIsUploadModalOpen(true)}
+                            className="btn-primary text-xs"
+                          >
+                            <UploadCloud className="w-3.5 h-3.5 mr-1" />
+                            <span>Upload First Document</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (

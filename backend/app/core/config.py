@@ -1,7 +1,18 @@
 import json
+import os
+from pathlib import Path
 from typing import List, Union, Optional
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+_ENV_FILES = (
+    str(_BACKEND_DIR / ".env"),
+    str(Path.cwd() / ".env"),
+    str(Path.cwd() / "backend" / ".env"),
+    ".env",
+    "backend/.env",
+)
 
 
 class Settings(BaseSettings):
@@ -10,7 +21,7 @@ class Settings(BaseSettings):
     Follows VendorIQ PRD requirements.
     """
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILES,
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=True,

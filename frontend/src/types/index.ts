@@ -24,6 +24,8 @@ export interface Vendor {
   phone?: string;
   address?: string;
   status: string;
+  invitation_status?: string;
+  invitation_sent_at?: string;
   risk_score?: number;
   risk_level?: RiskLevel;
   approval_rate?: number;

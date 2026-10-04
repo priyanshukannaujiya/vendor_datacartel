@@ -47,3 +47,26 @@ class UserResponse(BaseModel):
 class MeResponse(BaseModel):
     user: UserResponse
     company: CompanyResponse
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10)
+    new_password: str = Field(..., min_length=8)
+
+
+class UpdateProfileRequest(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = Field(None, min_length=8)
+
+
+class UpdateCompanyRequest(BaseModel):
+    name: Optional[str] = None
+    industry: Optional[str] = None
+    settings: Optional[dict] = None
+

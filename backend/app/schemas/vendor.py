@@ -27,10 +27,21 @@ class VendorBase(BaseModel):
     approval_rate: Optional[float] = 0.95
     quality_score: Optional[float] = 98.0
     is_active: bool = True
+    invitation_status: Optional[str] = "NOT_INVITED"
+    invitation_sent_at: Optional[datetime] = None
 
 
 class VendorCreate(VendorBase):
     pass
+
+
+class VendorInviteRequest(BaseModel):
+    vendor_name: str = Field(..., min_length=1, max_length=255)
+    email: str = Field(..., min_length=3, max_length=255)
+    contact_name: Optional[str] = None
+    country: Optional[str] = None
+    supplier_category: Optional[str] = "Active Raw Material"
+    notes: Optional[str] = None
 
 
 class VendorUpdate(BaseModel):
@@ -61,6 +72,7 @@ class VendorResponse(VendorBase):
     company_id: UUID
     name: Optional[str] = None
     code: Optional[str] = None
+    invitation_token: Optional[str] = None
     total_batches: Optional[int] = 0
     created_at: datetime
     updated_at: datetime

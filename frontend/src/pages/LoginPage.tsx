@@ -82,6 +82,14 @@ export const LoginPage: React.FC = () => {
                   className="form-input pl-10"
                 />
               </div>
+              <div className="flex justify-end mt-1.5">
+                <Link
+                  to="/forgot-password"
+                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                >
+                  Forgot your password?
+                </Link>
+              </div>
             </div>
 
             <div className="pt-2">
