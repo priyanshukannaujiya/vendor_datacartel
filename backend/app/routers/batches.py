@@ -209,7 +209,7 @@ def create_batch(
             material = RawMaterial(
                 company_id=vendor.company_id,
                 name="Cosmetic & Formulation Grade Ingredient",
-                material_code="RM-DEFAULT",
+                code="RM-DEFAULT",
                 purity_min=95.0,
                 category="Standard Ingredient",
             )
