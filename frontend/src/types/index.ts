@@ -70,7 +70,9 @@ export interface RawMaterial {
 export interface DocumentRecord {
   id: string;
   batch_id?: string;
+  batch_number?: string;
   vendor_id?: string;
+  vendor_name?: string;
   document_type: string;
   filename: string;
   original_filename?: string;

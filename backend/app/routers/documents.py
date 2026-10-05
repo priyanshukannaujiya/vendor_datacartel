@@ -1,13 +1,15 @@
 """
-Documents router for listing, retrieving, and managing supplier/batch documents in VendorIQ.
+Documents router for listing, retrieving, downloading, and managing supplier/batch documents in VendorIQ.
 """
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -16,6 +18,7 @@ from app.core.errors import NotFoundError
 from app.models.document import Document
 from app.models.batch import Batch
 from app.models.vendor import Vendor
+from app.models.company import Company
 from app.models.user import User
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -31,9 +34,20 @@ def list_documents(
     current_user: Optional[User] = Depends(get_optional_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Document)
+    query = (
+        db.query(Document)
+        .outerjoin(Batch, Document.batch_id == Batch.id)
+        .outerjoin(Vendor, Document.vendor_id == Vendor.id)
+    )
     if current_user and current_user.company_id:
-        query = query.filter(Document.company_id == current_user.company_id)
+        query = query.filter(
+            or_(
+                Document.company_id == current_user.company_id,
+                Document.company_id.is_(None),
+                Batch.company_id == current_user.company_id,
+                Vendor.company_id == current_user.company_id,
+            )
+        )
     if batch_id:
         query = query.filter(Document.batch_id == batch_id)
     if vendor_id:
@@ -57,10 +71,13 @@ def list_documents(
         items.append({
             "id": str(d.id),
             "filename": d.filename,
+            "original_filename": d.file_name,
             "document_type": d.document_type,
             "status": d.status,
+            "extraction_status": d.processing_status,
             "file_size": d.file_size,
             "file_path": d.file_path,
+            "mime_type": d.mime_type,
             "batch_id": str(d.batch_id) if d.batch_id else None,
             "batch_number": batch_number,
             "vendor_id": str(d.vendor_id) if d.vendor_id else None,
@@ -90,7 +107,7 @@ async def upload_document(
 ):
     upload_dir = os.path.join(settings.UPLOAD_DIR, "documents")
     os.makedirs(upload_dir, exist_ok=True)
-    clean_filename = f"{uuid.uuid4()[:8]}_{file.filename}"
+    clean_filename = f"{uuid.uuid4().hex[:8]}_{file.filename}"
     file_path = os.path.join(upload_dir, clean_filename)
 
     contents = await file.read()
@@ -98,23 +115,33 @@ async def upload_document(
         f.write(contents)
 
     target_company_id = current_user.company_id if current_user else None
-    if not target_company_id and vendor_id:
-        v = db.query(Vendor).filter(Vendor.id == vendor_id).first()
-        if v:
-            target_company_id = v.company_id
-    elif not target_company_id and batch_id:
+    assigned_vendor_id = vendor_id
+    if batch_id:
         b = db.query(Batch).filter(Batch.id == batch_id).first()
         if b:
-            target_company_id = b.company_id
+            if not target_company_id:
+                target_company_id = b.company_id
+            if not assigned_vendor_id:
+                assigned_vendor_id = b.vendor_id
+
+    if not target_company_id and assigned_vendor_id:
+        v = db.query(Vendor).filter(Vendor.id == assigned_vendor_id).first()
+        if v:
+            target_company_id = v.company_id
+
+    if not target_company_id:
+        default_company = db.query(Company).first()
+        if default_company:
+            target_company_id = default_company.id
 
     doc = Document(
         company_id=target_company_id,
         batch_id=batch_id,
-        vendor_id=vendor_id,
+        vendor_id=assigned_vendor_id,
         file_name=file.filename,
         file_path=file_path,
         document_type=document_type.upper(),
-        mime_type=file.content_type or "application/octet-stream",
+        mime_type=file.content_type or "application/pdf",
         file_size=len(contents),
         uploaded_by=current_user.id if current_user else None,
         processing_status="UPLOADED",
@@ -151,6 +178,11 @@ async def upload_document(
         try:
             batch = db.query(Batch).filter(Batch.id == batch_id).first()
             if batch:
+                if dt_enum == DocTypeEnum.COA and proc_result.extracted_data.get("purity") is not None:
+                    if batch.purity_reported is None:
+                        batch.purity_reported = proc_result.extracted_data.get("purity")
+                        db.add(batch)
+                        db.commit()
                 from app.services.pipeline_service import run_full_batch_pipeline
                 run_full_batch_pipeline(db, batch)
         except Exception:
@@ -159,9 +191,13 @@ async def upload_document(
     return {
         "id": str(doc.id),
         "filename": doc.filename,
+        "original_filename": doc.file_name,
         "document_type": doc.document_type,
         "file_size": doc.file_size,
         "status": doc.status,
+        "extraction_status": doc.processing_status,
+        "batch_id": str(doc.batch_id) if doc.batch_id else None,
+        "vendor_id": str(doc.vendor_id) if doc.vendor_id else None,
         "extracted_data": doc.extracted_data,
         "message": "Document uploaded, parsed, and analyzed successfully."
     }
@@ -172,21 +208,70 @@ def get_document(
     document_id: UUID,
     db: Session = Depends(get_db),
 ):
-    doc = db.query(Document).filter(Document.id == document_id).first()
+    doc = (
+        db.query(Document)
+        .options(joinedload(Document.vendor), joinedload(Document.batch))
+        .filter(Document.id == document_id)
+        .first()
+    )
     if not doc:
         raise NotFoundError(f"Document with ID '{document_id}' not found")
+
+    vendor_name = doc.vendor.vendor_name if doc.vendor else None
+    batch_number = doc.batch.batch_number if doc.batch else None
 
     return {
         "id": str(doc.id),
         "filename": doc.filename,
+        "original_filename": doc.file_name,
         "document_type": doc.document_type,
         "status": doc.status,
+        "extraction_status": doc.processing_status,
         "file_size": doc.file_size,
         "file_path": doc.file_path,
+        "mime_type": doc.mime_type,
         "batch_id": str(doc.batch_id) if doc.batch_id else None,
+        "batch_number": batch_number,
         "vendor_id": str(doc.vendor_id) if doc.vendor_id else None,
+        "vendor_name": vendor_name,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
         "extracted_data": doc.extracted_data,
         "extraction_error": doc.extraction_error,
     }
+
+
+@router.get("/{document_id}/download")
+def download_document(
+    document_id: UUID,
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise NotFoundError(f"Document with ID '{document_id}' not found")
+    if not os.path.exists(doc.file_path):
+        raise NotFoundError("Document file not found on server storage")
+    return FileResponse(
+        path=doc.file_path,
+        filename=doc.file_name,
+        media_type=doc.mime_type or "application/pdf",
+    )
+
+
+@router.delete("/{document_id}")
+def delete_document(
+    document_id: UUID,
+    db: Session = Depends(get_db),
+):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise NotFoundError(f"Document with ID '{document_id}' not found")
+    try:
+        if os.path.exists(doc.file_path):
+            os.remove(doc.file_path)
+    except Exception:
+        pass
+    db.delete(doc)
+    db.commit()
+    return {"message": "Document deleted successfully"}
+

@@ -25,8 +25,9 @@ import {
   UploadCloud,
   ChevronDown,
   Mail,
+  Download,
 } from 'lucide-react';
-import { batchApi, emailApi } from '../api/client';
+import { batchApi, emailApi, documentApi } from '../api/client';
 import { BatchDetail, RiskLevel } from '../types';
 
 export const BatchDetailPage: React.FC = () => {
@@ -34,6 +35,7 @@ export const BatchDetailPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [overrideDecision, setOverrideDecision] = useState<string>('');
   const [overrideNotes, setOverrideNotes] = useState<string>('');
+  const [vendorRecipientEmail, setVendorRecipientEmail] = useState<string>('');
   const [showOverrideBox, setShowOverrideBox] = useState<boolean>(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
@@ -114,14 +116,22 @@ export const BatchDetailPage: React.FC = () => {
     },
   });
 
+  // Sync vendor email into recipient email state
+  React.useEffect(() => {
+    if (batch?.vendor?.contact_email && !vendorRecipientEmail) {
+      setVendorRecipientEmail(batch.vendor.contact_email);
+    }
+  }, [batch?.vendor?.contact_email, vendorRecipientEmail]);
+
   // Action 3: Execute Decision Engine & Google SMTP Dispatch
   const decisionMutation = useMutation({
-    mutationFn: (override?: { manual_override: boolean; decision: string; notes: string }) =>
+    mutationFn: (override?: { manual_override?: boolean; decision?: string; notes?: string; recipient_email?: string }) =>
       batchApi.makeDecision(id!, override),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['batch', id] });
       queryClient.invalidateQueries({ queryKey: ['batches'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] });
+      queryClient.invalidateQueries({ queryKey: ['documents'] });
       setShowOverrideBox(false);
       setActionMessage(`Decision executed: ${data.decision}. Notification status: ${data.email_status}`);
       setTimeout(() => setActionMessage(null), 6000);
@@ -141,6 +151,20 @@ export const BatchDetailPage: React.FC = () => {
     },
     onError: (err: any) => {
       setActionMessage(`Email dispatch error: ${err?.response?.data?.detail || err.message}`);
+    },
+  });
+
+  // Action 5: Explicitly dispatch or re-send official approval/rejection decision email to vendor
+  const dispatchDecisionEmailMutation = useMutation({
+    mutationFn: (customEmail?: string) => batchApi.dispatchDecisionEmail(id!, customEmail),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['batch', id] });
+      queryClient.invalidateQueries({ queryKey: ['batches'] });
+      setActionMessage(data.message || `Decision email successfully dispatched to ${data.recipient}!`);
+      setTimeout(() => setActionMessage(null), 6000);
+    },
+    onError: (err: any) => {
+      setActionMessage(`Decision email dispatch failed: ${err?.response?.data?.detail || err.message}`);
     },
   });
 
@@ -410,7 +434,128 @@ export const BatchDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 2. Quality Checks Table */}
+      {/* 2. Attached Compliance Documents */}
+      <div className="v-card overflow-hidden">
+        <div className="v-card-header flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <FileText className="w-4 h-4 text-blue-600" />
+              <h3 className="text-sm font-semibold text-slate-900">Attached Compliance Documents</h3>
+              <span className="badge badge-info text-xs">
+                {batch.documents?.length || 0} Files
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Certificates of Analysis (COA), Safety Data Sheets (SDS), and Lot Monograph files submitted for this batch.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => requestDocMutation.mutate()}
+              disabled={requestDocMutation.isPending}
+              className="btn-secondary text-xs"
+              title="Send automated documentation request email to supplier"
+            >
+              <Send className="w-3.5 h-3.5 mr-1 text-slate-500" />
+              {requestDocMutation.isPending ? 'Sending Request...' : 'Request via Email'}
+            </button>
+            <button
+              onClick={() => setIsUploadModalOpen(true)}
+              className="btn-primary text-xs"
+            >
+              <UploadCloud className="w-3.5 h-3.5 mr-1" />
+              <span>Upload Document</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Document Name</th>
+                <th>Type</th>
+                <th>File Size</th>
+                <th>Extraction Status</th>
+                <th>Uploaded</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!batch.documents || batch.documents.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-xs text-slate-500">
+                    <div className="max-w-sm mx-auto space-y-2">
+                      <p>No documents uploaded yet for this batch lot.</p>
+                      <button
+                        onClick={() => setIsUploadModalOpen(true)}
+                        className="btn-primary text-xs"
+                      >
+                        <UploadCloud className="w-3.5 h-3.5 mr-1" />
+                        <span>Upload First Vendor PDF</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                batch.documents.map((doc) => (
+                  <tr key={doc.id}>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                        <span className="font-semibold text-slate-900 text-xs truncate max-w-xs">
+                          {doc.original_filename || doc.filename}
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-800">
+                        {doc.document_type}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-xs text-slate-600 font-mono">
+                        {doc.file_size != null ? `${(doc.file_size / 1024).toFixed(1)} KB` : '—'}
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={`badge text-xs ${
+                          ['PROCESSED', 'EXTRACTED', 'COMPLETED'].includes(doc.extraction_status?.toUpperCase() || '')
+                            ? 'badge-approved'
+                            : 'badge-pending'
+                        }`}
+                      >
+                        {doc.extraction_status || 'UPLOADED'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="text-xs text-slate-600">
+                        {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : '—'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={documentApi.downloadUrl(doc.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-ghost text-xs text-blue-600 p-1 flex items-center gap-1 font-semibold"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>View / Download</span>
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 3. Quality Checks Table */}
       <div className="v-card overflow-hidden">
         <div className="v-card-header">
           <div>
@@ -680,8 +825,23 @@ export const BatchDetailPage: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {finalDecision && (
+              <button
+                onClick={() => dispatchDecisionEmailMutation.mutate(vendorRecipientEmail || undefined)}
+                disabled={dispatchDecisionEmailMutation.isPending}
+                className="btn-secondary text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+                title="Resend approval or rejection notification email to vendor"
+              >
+                <Send className="w-3.5 h-3.5 mr-1 text-blue-600" />
+                {dispatchDecisionEmailMutation.isPending ? 'Sending...' : 'Resend Decision Email'}
+              </button>
+            )}
+
             <button
-              onClick={() => setShowOverrideBox(!showOverrideBox)}
+              onClick={() => {
+                setOverrideDecision('');
+                setShowOverrideBox(!showOverrideBox);
+              }}
               className="btn-secondary text-xs"
             >
               <span>Manual Override</span>
@@ -691,7 +851,7 @@ export const BatchDetailPage: React.FC = () => {
             <button
               onClick={() => {
                 setOverrideDecision('APPROVED');
-                setOverrideNotes('');
+                if (!overrideNotes) setOverrideNotes('Approved: Chemical assay, HPLC purity, and compliance monographs verified.');
                 setShowOverrideBox(true);
               }}
               disabled={decisionMutation.isPending}
@@ -704,7 +864,7 @@ export const BatchDetailPage: React.FC = () => {
             <button
               onClick={() => {
                 setOverrideDecision('REJECTED');
-                setOverrideNotes('');
+                if (!overrideNotes) setOverrideNotes('Rejected: Out of specification tolerances or missing required compliance certificates.');
                 setShowOverrideBox(true);
               }}
               disabled={decisionMutation.isPending}
@@ -716,38 +876,70 @@ export const BatchDetailPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Override Drawer */}
+        {/* Override / Decision Drawer */}
         {showOverrideBox && (
-          <div className="mt-4 p-4 rounded-lg bg-slate-50 border border-slate-200 space-y-3">
-            <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Human Override Specification
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="mt-4 p-5 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <span>Lot Decision & Vendor Notification</span>
+                {overrideDecision && (
+                  <span className={`badge text-[11px] font-bold ${
+                    overrideDecision === 'APPROVED' ? 'badge-approved' : overrideDecision === 'REJECTED' ? 'badge-rejected' : 'badge-needs-review'
+                  }`}>
+                    {overrideDecision}
+                  </span>
+                )}
+              </h4>
+              <button onClick={() => setShowOverrideBox(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="form-label">Override Decision</label>
+                <label className="form-label">Decision Status *</label>
                 <select
                   value={overrideDecision}
                   onChange={(e) => setOverrideDecision(e.target.value)}
                   className="form-select text-xs"
                 >
                   <option value="">Select Decision</option>
-                  <option value="APPROVED">APPROVED</option>
-                  <option value="REJECTED">REJECTED</option>
-                  <option value="NEEDS_REVIEW">NEEDS REVIEW</option>
+                  <option value="APPROVED">APPROVED (Lot Cleared for Intake)</option>
+                  <option value="REJECTED">REJECTED (Lot Quarantined & Returned)</option>
+                  <option value="NEEDS_REVIEW">NEEDS REVIEW (Secondary QA Assessment)</option>
                 </select>
               </div>
+
               <div>
-                <label className="form-label">Override Justification / Audit Notes</label>
-                <input
-                  type="text"
-                  value={overrideNotes}
-                  onChange={(e) => setOverrideNotes(e.target.value)}
-                  placeholder="e.g. Authorized under deviation protocol DEV-2026-081"
-                  className="form-input text-xs"
-                />
+                <label className="form-label">Vendor Recipient Email (Google SMTP) *</label>
+                <div className="relative">
+                  <Mail className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="email"
+                    value={vendorRecipientEmail}
+                    onChange={(e) => setVendorRecipientEmail(e.target.value)}
+                    placeholder="e.g. quality-lead@supplier.com"
+                    className="form-input text-xs pl-8"
+                  />
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Official decision letter with test summary and reference ID will be sent via Google SMTP.
+                </span>
               </div>
             </div>
-            <div className="flex justify-end gap-2">
+
+            <div>
+              <label className="form-label">Audit Justification & Notes *</label>
+              <textarea
+                rows={2}
+                value={overrideNotes}
+                onChange={(e) => setOverrideNotes(e.target.value)}
+                placeholder="Detail the operational justification, deviation protocol, or analytical assay compliance..."
+                className="form-input text-xs resize-none"
+              />
+            </div>
+
+            <div className="flex justify-end items-center gap-3 pt-2 border-t border-slate-200/80">
               <button
                 type="button"
                 onClick={() => setShowOverrideBox(false)}
@@ -763,11 +955,14 @@ export const BatchDetailPage: React.FC = () => {
                     manual_override: true,
                     decision: overrideDecision,
                     notes: overrideNotes,
+                    recipient_email: vendorRecipientEmail || undefined,
                   })
                 }
-                className="btn-primary text-xs"
+                className={`btn-primary text-xs ${
+                  overrideDecision === 'APPROVED' ? 'bg-emerald-600 hover:bg-emerald-700' : overrideDecision === 'REJECTED' ? 'bg-rose-600 hover:bg-rose-700' : ''
+                }`}
               >
-                Apply Override & Dispatch Email
+                {decisionMutation.isPending ? 'Dispatching...' : `Confirm ${overrideDecision || 'Decision'} & Send Email to Vendor`}
               </button>
             </div>
           </div>

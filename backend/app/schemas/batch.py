@@ -92,6 +92,8 @@ class BatchDecisionRequest(BaseModel):
     manual_override: bool = False
     decision: Optional[Literal["APPROVED", "REJECTED", "NEEDS_REVIEW"]] = None
     notes: Optional[str] = None
+    recipient_email: Optional[str] = None
+    vendor_email: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_manual_override(self) -> "BatchDecisionRequest":

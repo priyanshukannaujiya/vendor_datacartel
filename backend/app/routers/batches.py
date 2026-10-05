@@ -827,7 +827,12 @@ def create_batch_decision(
         timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
 
-    recipient = (vendor.contact_email or vendor.email) if vendor else None
+    recipient = (
+        (request.recipient_email.strip() if request.recipient_email else None)
+        or (request.vendor_email.strip() if request.vendor_email else None)
+        or (vendor.contact_email.strip() if vendor and vendor.contact_email else None)
+        or (vendor.email.strip() if vendor and vendor.email else None)
+    )
     if not recipient:
         last_req = (
             db.query(EmailEvent)
@@ -836,7 +841,7 @@ def create_batch_decision(
             .first()
         )
         if last_req and last_req.recipient_email:
-            recipient = last_req.recipient_email
+            recipient = last_req.recipient_email.strip()
     if not recipient:
         received_audit = (
             db.query(AuditEvent)
@@ -845,13 +850,13 @@ def create_batch_decision(
             .first()
         )
         if received_audit and received_audit.details and received_audit.details.get("sender"):
-            recipient = received_audit.details.get("sender")
+            recipient = str(received_audit.details.get("sender")).strip()
 
     if recipient and vendor and not vendor.email:
         vendor.email = recipient
         db.add(vendor)
 
-    email_status = "NOT_APPLICABLE"
+    email_status = "NO_RECIPIENT"
     if recipient:
         email_event = EmailEvent(
             company_id=batch.company_id,
@@ -885,15 +890,36 @@ def create_batch_decision(
                 company_id=batch.company_id,
                 vendor_id=batch.vendor_id,
                 batch_id=batch.id,
-                details={"email_id": str(email_event.id), "status": "SENT"},
+                details={
+                    "email_id": str(email_event.id),
+                    "status": "SENT",
+                    "recipient": recipient,
+                    "decision": decision_value,
+                },
             )
-        except EmailDeliveryError as exc:
+            logger.info("Decision email successfully sent via Google SMTP to %s for batch %s (%s)", recipient, batch.batch_number, decision_value)
+        except Exception as exc:
             email_event.status = "FAILED"
             email_event.error_message = str(exc)
             logger.warning("SMTP delivery failed for batch %s: %s", batch.batch_number, exc)
+            record_audit_event(
+                db,
+                "Email Failed",
+                company_id=batch.company_id,
+                vendor_id=batch.vendor_id,
+                batch_id=batch.id,
+                details={
+                    "email_id": str(email_event.id),
+                    "status": "FAILED",
+                    "recipient": recipient,
+                    "error": str(exc),
+                },
+            )
 
         db.commit()
         email_status = email_event.status
+    else:
+        logger.warning("No recipient email found for batch %s decision notification", batch.batch_number)
 
     return BatchDecisionResponse(
         decision=decision_value,
@@ -1148,5 +1174,152 @@ def request_batch_documents(
                 f"Email delivery failed for {recipient}; the failed event is saved for retry. "
                 f"Google SMTP error: {error_message or 'Check SMTP credentials in Settings'}"
             )
+        ),
+    }
+
+
+@router.post("/{batch_id}/dispatch-decision-email")
+def dispatch_batch_decision_email(
+    batch_id: Union[UUID, str],
+    custom_email: Optional[str] = Body(None, embed=True),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually dispatch or re-send the official Approval or Rejection decision email to the vendor.
+    """
+    batch = _get_batch_by_id(db, batch_id)
+    if not batch:
+        raise NotFoundError(f"Batch '{batch_id}' not found")
+
+    vendor = batch.vendor
+    recipient = (
+        (custom_email.strip() if custom_email else None)
+        or (vendor.contact_email.strip() if vendor and vendor.contact_email else None)
+        or (vendor.email.strip() if vendor and vendor.email else None)
+    )
+    if not recipient:
+        last_req = (
+            db.query(EmailEvent)
+            .filter(EmailEvent.batch_id == batch.id)
+            .order_by(desc(EmailEvent.created_at))
+            .first()
+        )
+        if last_req and last_req.recipient_email:
+            recipient = last_req.recipient_email.strip()
+    if not recipient:
+        raise BadRequestError("No recipient email found for this vendor. Please provide an email address.")
+
+    decision_record = (
+        db.query(BatchDecision)
+        .filter(BatchDecision.batch_id == batch.id)
+        .order_by(desc(BatchDecision.created_at))
+        .first()
+    )
+    decision_value = decision_record.decision if decision_record else (batch.status if batch.status in ["APPROVED", "REJECTED", "NEEDS_REVIEW"] else "APPROVED")
+    reason_value = decision_record.reason if decision_record else f"Batch status evaluated as {decision_value}."
+
+    intelligence = _get_or_create_batch_intelligence(db, batch)
+    checks = intelligence.validation_checks.get("all_checks", [])
+    validation_summary = [f"{c.get('name', 'Check').replace('_', ' ').title()}: {c.get('status', 'UNKNOWN')}" for c in checks]
+
+    subject, html_content = render_decision_email(
+        decision_value,
+        batch_number=batch.batch_number,
+        vendor_name=vendor.vendor_name if vendor else "Valued Vendor",
+        material=batch.raw_material.name if batch.raw_material else "Raw Material",
+        risk_score=batch.risk_score or 15.0,
+        risk_level=batch.risk_level or "LOW",
+        validation_summary=validation_summary,
+        validation_results=intelligence.validation_checks,
+        kimi_summary=intelligence.kimi_analysis.get("summary", "") if intelligence.kimi_analysis else "",
+        primary_issues=[],
+        uncertain_checks=[],
+        missing_information=[],
+        reason=reason_value,
+        recommended_actions=decision_record.recommended_actions if decision_record else [],
+        reference_id=str(decision_record.id) if decision_record else str(batch.id),
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    )
+
+    email_event = EmailEvent(
+        company_id=batch.company_id,
+        vendor_id=batch.vendor_id,
+        batch_id=batch.id,
+        decision_id=decision_record.id if decision_record else None,
+        recipient_email=recipient,
+        subject=subject,
+        email_type=decision_value,
+        status="PENDING",
+        provider="GOOGLE_SMTP",
+        html_content=html_content,
+        text_content=f"VendorIQ batch {batch.batch_number}: {decision_value}\n{reason_value}",
+    )
+    db.add(email_event)
+    db.commit()
+    db.refresh(email_event)
+
+    email_status = "PENDING"
+    error_message = None
+    try:
+        send_email(
+            recipient=recipient,
+            subject=subject,
+            html_content=html_content,
+            text_content=email_event.text_content,
+        )
+        email_status = "SENT"
+        email_event.status = "SENT"
+        email_event.sent_at = datetime.now(timezone.utc)
+        record_audit_event(
+            db,
+            "Email Sent",
+            company_id=batch.company_id,
+            vendor_id=batch.vendor_id,
+            batch_id=batch.id,
+            details={
+                "email_id": str(email_event.id),
+                "status": "SENT",
+                "recipient": recipient,
+                "decision": decision_value,
+            },
+        )
+    except Exception as exc:
+        email_status = "FAILED"
+        error_message = str(exc)
+        email_event.status = "FAILED"
+        email_event.error_message = error_message
+        record_audit_event(
+            db,
+            "Email Failed",
+            company_id=batch.company_id,
+            vendor_id=batch.vendor_id,
+            batch_id=batch.id,
+            details={
+                "email_id": str(email_event.id),
+                "status": "FAILED",
+                "recipient": recipient,
+                "error": error_message,
+            },
+        )
+
+    if recipient and vendor and not vendor.email:
+        vendor.email = recipient
+        db.add(vendor)
+
+    db.commit()
+
+    return {
+        "success": email_status == "SENT",
+        "batch_id": str(batch.id),
+        "batch_number": batch.batch_number,
+        "recipient": recipient,
+        "subject": subject,
+        "decision": decision_value,
+        "email_status": email_status,
+        "message": (
+            f"{decision_value} notification email successfully delivered to {recipient} via Google SMTP."
+            if email_status == "SENT"
+            else f"Failed delivering decision email to {recipient}: {error_message}"
         ),
     }

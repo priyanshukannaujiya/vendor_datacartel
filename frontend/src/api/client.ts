@@ -111,6 +111,10 @@ const normalizeDocument = (source: any): DocumentRecord => ({
   filename: source.filename || source.file_name || '',
   original_filename: source.original_filename || source.file_name || source.filename || '',
   extraction_status: source.extraction_status || source.processing_status || source.status,
+  batch_id: source.batch_id || source.batch?.id,
+  batch_number: source.batch_number || source.batch?.batch_number,
+  vendor_id: source.vendor_id || source.vendor?.id,
+  vendor_name: source.vendor_name || source.vendor?.vendor_name || source.vendor?.name,
   created_at: source.created_at || source.uploaded_at || source.upload_date || '',
 });
 
@@ -436,6 +440,7 @@ export const batchApi = {
       manual_override?: boolean;
       decision?: string;
       notes?: string;
+      recipient_email?: string;
       company_thresholds?: Record<string, unknown>;
     }
   ): Promise<DecisionRecord> => {
@@ -460,6 +465,14 @@ export const batchApi = {
   // Request batch PDF documents (COA/SDS/GMP) from vendor via Google SMTP
   requestDocuments: async (batchId: string, customEmail?: string): Promise<{ success: boolean; message: string; recipient: string; email_status: string }> => {
     const response = await apiClient.post(`/api/batches/${batchId}/request-documents`, {
+      custom_email: customEmail || undefined,
+    });
+    return response.data;
+  },
+
+  // Explicitly dispatch or re-send official approval/rejection decision email to vendor
+  dispatchDecisionEmail: async (batchId: string, customEmail?: string): Promise<{ success: boolean; message: string; recipient: string; email_status: string; decision?: string }> => {
+    const response = await apiClient.post(`/api/batches/${batchId}/dispatch-decision-email`, {
       custom_email: customEmail || undefined,
     });
     return response.data;
@@ -489,6 +502,11 @@ export const documentApi = {
   getById: async (id: string): Promise<DocumentRecord> => {
     const response = await apiClient.get(`/api/documents/${id}`);
     return normalizeDocument(response.data);
+  },
+
+  downloadUrl: (id: string): string => {
+    const baseUrl = import.meta.env.VITE_API_URL || '';
+    return `${baseUrl}/api/documents/${id}/download`;
   },
 
   delete: async (id: string): Promise<void> => {

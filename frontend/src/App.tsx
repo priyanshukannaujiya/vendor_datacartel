@@ -18,6 +18,7 @@ const PredictionsPage = lazy(() => import('./pages/PredictionsPage').then(m => (
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 const MachineIntelligencePage = lazy(() => import('./pages/MachineIntelligencePage').then(m => ({ default: m.MachineIntelligencePage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const VendorPortalPage = lazy(() => import('./pages/VendorPortalPage').then(m => ({ default: m.VendorPortalPage })));
 
 // Sleek fallback loader while route chunk is downloaded
 const PageLoadingFallback: React.FC = () => (
@@ -31,11 +32,12 @@ export const App: React.FC = () => {
   return (
     <Suspense fallback={<PageLoadingFallback />}>
       <Routes>
-        {/* Public Auth Routes */}
+        {/* Public Auth & Portal Routes */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/vendor-portal" element={<VendorPortalPage />} />
 
         {/* Protected App Routes */}
         <Route element={<ProtectedRoute />}>
