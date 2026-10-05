@@ -24,6 +24,7 @@ uploads/
 
 # Machine learning model artifacts
 *.joblib
+!app/ml/artifacts/*.joblib
 
 # Editor and OS
 .vscode/
