@@ -146,8 +146,22 @@ class Settings(BaseSettings):
 
     @property
     def all_cors_origins(self) -> List[str]:
-        """Combine CORS_ORIGINS list and FRONTEND_URL without duplicates."""
-        origins: List[str] = list(self.CORS_ORIGINS) if isinstance(self.CORS_ORIGINS, list) else []
+        """Combine CORS_ORIGINS list and FRONTEND_URL with local development defaults."""
+        defaults = [
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://localhost:4173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5173",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:4173",
+            "http://127.0.0.1:5174",
+        ]
+        origins: List[str] = list(defaults)
+        if isinstance(self.CORS_ORIGINS, list):
+            for o in self.CORS_ORIGINS:
+                if o and o not in origins:
+                    origins.append(o)
         if self.FRONTEND_URL and self.FRONTEND_URL not in origins:
             origins.append(self.FRONTEND_URL)
         return origins

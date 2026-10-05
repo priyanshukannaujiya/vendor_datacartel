@@ -40,13 +40,11 @@ setup_exception_handlers(app)
 # Configure CORS restrictions
 # Allows FRONTEND_URL and CORS_ORIGINS from settings, with localhost defaults for local dev
 cors_origins = settings.all_cors_origins
-if not cors_origins:
-    cors_origins = ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.vercel\.app|https://.*\.onrender\.com)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
