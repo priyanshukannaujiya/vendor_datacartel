@@ -78,7 +78,12 @@ export const BatchesPage: React.FC = () => {
       });
     },
     onError: (err: any) => {
-      const msg = err.response?.data?.detail || err.message || 'Failed to create batch lot. Please check supplier selection.';
+      const msg =
+        err.response?.data?.error?.message ||
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        'Failed to create batch lot. Please check supplier selection.';
       setErrorMessage(msg);
     },
   });
