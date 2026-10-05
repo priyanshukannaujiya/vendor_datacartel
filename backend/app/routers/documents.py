@@ -42,7 +42,7 @@ def list_documents(
         .outerjoin(Batch, Document.batch_id == Batch.id)
         .outerjoin(Vendor, Document.vendor_id == Vendor.id)
     )
-    if current_user and current_user.company_id:
+    if current_user and current_user.company_id and current_user.role not in ["admin", "qa_manager", "superadmin"]:
         query = query.filter(
             or_(
                 Document.company_id == current_user.company_id,
