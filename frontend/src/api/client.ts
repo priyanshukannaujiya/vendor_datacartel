@@ -403,7 +403,7 @@ export const batchApi = {
   create: async (batchData: {
     batch_number: string;
     vendor_id: string;
-    raw_material_id: string;
+    raw_material_id?: string;
     quantity: number;
     unit?: string;
     price_per_unit?: number;

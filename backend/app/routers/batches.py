@@ -202,9 +202,24 @@ def create_batch(
     if not vendor or (current_user and vendor.company_id != current_user.company_id):
         raise NotFoundError(f"Vendor with ID '{data.vendor_id}' not found in your company")
 
-    material = db.query(RawMaterial).filter(RawMaterial.id == m_uuid).first()
-    if not material or (current_user and material.company_id != current_user.company_id):
-        raise NotFoundError(f"Raw material with ID '{data.raw_material_id}' not found in your company")
+    if not m_uuid:
+        # Auto-resolve or create default raw material for the company
+        material = db.query(RawMaterial).filter(RawMaterial.company_id == vendor.company_id).first()
+        if not material:
+            material = RawMaterial(
+                company_id=vendor.company_id,
+                name="Cosmetic & Formulation Grade Ingredient",
+                material_code="RM-DEFAULT",
+                purity_min=95.0,
+                category="Standard Ingredient",
+            )
+            db.add(material)
+            db.flush()
+        m_uuid = material.id
+    else:
+        material = db.query(RawMaterial).filter(RawMaterial.id == m_uuid).first()
+        if not material or (current_user and material.company_id != current_user.company_id):
+            raise NotFoundError(f"Raw material with ID '{data.raw_material_id}' not found in your company")
 
     company_id = vendor.company_id
 

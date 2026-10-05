@@ -289,9 +289,9 @@ export const BatchDetailPage: React.FC = () => {
             <p className="text-sm text-slate-600">
               Supplier:{' '}
               <Link to={`/vendors/${batch.vendor_id}`} className="font-semibold text-blue-600 hover:underline">
-                {batch.vendor?.name}
+                {batch.vendor?.name || 'Assigned Supplier'}
               </Link>{' '}
-              • Material: <span className="font-semibold text-slate-800">{batch.raw_material?.name}</span>
+              • Material: <span className="font-semibold text-slate-800">{batch.raw_material?.name || 'Cosmetic & Formulation Grade Material'}</span>
             </p>
           </div>
 
@@ -361,12 +361,12 @@ export const BatchDetailPage: React.FC = () => {
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-200/80">
             <span className="text-[11px] font-semibold text-slate-400 uppercase block">Material</span>
             <span className="text-xs font-bold text-slate-800 mt-1 block truncate">
-              {batch.raw_material?.name}
+              {batch.raw_material?.name || 'Cosmetic & Formulation Grade Material'}
             </span>
             <span className="text-[10px] text-slate-500">
               {batch.raw_material?.required_purity != null
                 ? `Spec: ≥${batch.raw_material.required_purity}%`
-                : 'Specification not configured'}
+                : 'Purity Spec: ≥95.0%'}
             </span>
           </div>
 

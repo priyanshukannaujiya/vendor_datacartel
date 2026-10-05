@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class BatchCreate(BaseModel):
     vendor_id: UUID
-    raw_material_id: UUID
+    raw_material_id: Optional[UUID] = None
     batch_number: str = Field(..., min_length=1, max_length=100)
     manufacturing_date: Optional[date] = None
     expiry_date: Optional[date] = None
