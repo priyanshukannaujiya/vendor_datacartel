@@ -19,6 +19,14 @@ class EmailDeliveryError(RuntimeError):
     """Raised when an email cannot be submitted to the configured SMTP server."""
 
 
+def _clean_header(val: str | None) -> str:
+    """Sanitize header string by removing linefeed and carriage return characters."""
+    if not val:
+        return ""
+    # Strip any \r or \n to comply with RFC 5322 & Python EmailMessage policy
+    return "".join(c for c in str(val) if c not in "\r\n").strip()
+
+
 def send_email(
     recipient: str,
     subject: str,
@@ -26,26 +34,32 @@ def send_email(
     text_content: str | None = None,
 ) -> None:
     """Send one message using authenticated Google SMTP with STARTTLS."""
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    port_value = os.getenv("SMTP_PORT", "587")
-    username = os.getenv("SMTP_USERNAME")
-    password = os.getenv("SMTP_PASSWORD")
-    from_address = os.getenv("SMTP_FROM")
-    from_name = os.getenv("SMTP_FROM_NAME", "VendorIQ")
+    host = _clean_header(os.getenv("SMTP_HOST", "smtp.gmail.com"))
+    port_value = _clean_header(os.getenv("SMTP_PORT", "587"))
+    username = _clean_header(os.getenv("SMTP_USERNAME"))
+    password = (os.getenv("SMTP_PASSWORD") or "").strip()
+    from_address = _clean_header(os.getenv("SMTP_FROM"))
+    from_name = _clean_header(os.getenv("SMTP_FROM_NAME", "VendorIQ"))
+
+    clean_recipient = _clean_header(recipient)
+    clean_subject = _clean_header(subject)
 
     if not username or not password or not from_address:
         raise EmailDeliveryError(
             "SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM must be configured."
         )
+    if not clean_recipient:
+        raise EmailDeliveryError("Recipient email address must not be empty.")
+
     try:
         port = int(port_value)
     except ValueError as exc:
         raise EmailDeliveryError("SMTP_PORT must be a valid integer.") from exc
 
     message = EmailMessage()
-    message["Subject"] = subject
+    message["Subject"] = clean_subject
     message["From"] = formataddr((from_name, from_address))
-    message["To"] = recipient
+    message["To"] = clean_recipient
     message.set_content(text_content or "This message contains an HTML assessment.")
     message.add_alternative(html_content, subtype="html")
 
@@ -57,7 +71,7 @@ def send_email(
             smtp.login(username, password)
             smtp.send_message(message)
     except (smtplib.SMTPException, OSError) as exc:
-        logger.exception("Google SMTP delivery failed for recipient %s", recipient)
-        raise EmailDeliveryError("Google SMTP delivery failed.") from exc
+        logger.exception("Google SMTP delivery failed for recipient %s", clean_recipient)
+        raise EmailDeliveryError(f"Google SMTP delivery failed: {exc}") from exc
 
-    logger.info("Email submitted via Google SMTP to %s", recipient)
+    logger.info("Email submitted via Google SMTP to %s", clean_recipient)

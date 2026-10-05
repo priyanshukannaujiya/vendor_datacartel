@@ -36,7 +36,7 @@ def render_decision_email(decision: str, **context: Any) -> tuple[str, str]:
             "NEEDS_REVIEW": "VendorIQ — Additional Review Required | {{ batch_number }}",
         }[email_type]
     )
-    subject = subject_template.render(**template_context)
+    subject = " ".join(subject_template.render(**template_context).split())
     html_content = _environment.get_template(template_name).render(**template_context)
     return subject, html_content
 
@@ -56,7 +56,7 @@ def render_document_request_email(**context: Any) -> tuple[str, str]:
     subject_template = _environment.from_string(
         "VendorIQ — Documentation Request: Batch {{ batch_number }} ({{ material_name }})"
     )
-    subject = subject_template.render(**template_context)
+    subject = " ".join(subject_template.render(**template_context).split())
     html_content = _environment.get_template("document_request.html").render(**template_context)
     return subject, html_content
 
