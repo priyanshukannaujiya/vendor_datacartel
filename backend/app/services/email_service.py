@@ -64,13 +64,32 @@ def send_email(
     message.add_alternative(html_content, subtype="html")
 
     try:
-        with smtplib.SMTP(host, port, timeout=30) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(username, password)
-            smtp.send_message(message)
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=12) as smtp:
+                smtp.ehlo()
+                smtp.login(username, password)
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=12) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.ehlo()
+                smtp.login(username, password)
+                smtp.send_message(message)
     except (smtplib.SMTPException, OSError) as exc:
+        # Fallback to Gmail SSL port 465 if port 587 timed out or is blocked on cloud host
+        if port != 465 and "smtp.gmail.com" in host:
+            logger.info("Port 587 failed (%s), attempting Gmail SMTP_SSL on port 465...", exc)
+            try:
+                with smtplib.SMTP_SSL(host, 465, timeout=12) as ssl_smtp:
+                    ssl_smtp.ehlo()
+                    ssl_smtp.login(username, password)
+                    ssl_smtp.send_message(message)
+                logger.info("Email successfully submitted via Google SMTP_SSL (port 465) to %s", clean_recipient)
+                return
+            except Exception as ssl_exc:
+                logger.warning("SMTP_SSL fallback on port 465 also failed: %s", ssl_exc)
+
         logger.exception("Google SMTP delivery failed for recipient %s", clean_recipient)
         raise EmailDeliveryError(f"Google SMTP delivery failed: {exc}") from exc
 
