@@ -59,8 +59,8 @@ class Settings(BaseSettings):
     SMTP_FROM: Optional[str] = None
     SMTP_FROM_NAME: str = "VendorIQ"
 
-    # Optional Gmail inbox polling for supplier PDF replies.
-    IMAP_ENABLED: bool = False
+    # Inbound Gmail inbox polling for supplier PDF replies.
+    IMAP_ENABLED: bool = True
     IMAP_HOST: str = "imap.gmail.com"
     IMAP_PORT: int = 993
     IMAP_USERNAME: Optional[str] = None

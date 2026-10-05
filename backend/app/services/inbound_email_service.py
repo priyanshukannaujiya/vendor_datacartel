@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import imaplib
 import logging
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -42,7 +44,8 @@ def _decoded_header(value: Optional[str]) -> str:
             parts.append(content.decode(charset or "utf-8", errors="replace"))
         else:
             parts.append(content)
-    return "".join(parts)
+    raw = "".join(parts)
+    return html.unescape(raw)
 
 
 def _document_type(filename: str) -> DocumentType:
@@ -74,6 +77,7 @@ def _sent_batch_requests(db: Session):
 
 def _matching_batch_id(sender: str, subject: str, sent_requests) -> Optional[str]:
     matching = []
+    clean_subj = html.unescape(subject)
     for request, batch in sent_requests:
         if request.recipient_email.strip().casefold() != sender.casefold():
             continue
@@ -81,7 +85,7 @@ def _matching_batch_id(sender: str, subject: str, sent_requests) -> Optional[str
             rf"(?<![A-Za-z0-9]){re.escape(batch.batch_number)}(?![A-Za-z0-9])",
             re.IGNORECASE,
         )
-        if token.search(subject):
+        if token.search(clean_subj) or token.search(subject):
             matching.append((len(batch.batch_number), request.created_at, str(batch.id)))
     if not matching:
         return None
@@ -191,7 +195,10 @@ def ingest_message(db: Session, raw_message: bytes, message_uid: str) -> tuple[i
             file_path = upload_dir / stored_name
             existing = db.query(Document).filter(
                 Document.batch_id == batch.id,
-                Document.file_path == str(file_path),
+                or_(
+                    Document.file_path == str(file_path),
+                    Document.file_name == safe_name,
+                ),
             ).first()
             if existing:
                 existing_documents += 1
@@ -299,8 +306,8 @@ def ingest_message(db: Session, raw_message: bytes, message_uid: str) -> tuple[i
         raise
 
 
-def poll_inbox_once() -> int:
-    """Fetch unread messages and ingest matching PDF replies."""
+def poll_inbox_once(force_rescan: bool = False) -> int:
+    """Fetch unread/recent supplier replies and ingest matching PDF documents."""
     username = settings.IMAP_USERNAME or settings.SMTP_USERNAME
     password = settings.IMAP_PASSWORD or settings.SMTP_PASSWORD
     if not username or not password:
@@ -321,20 +328,20 @@ def poll_inbox_once() -> int:
     highest_scanned_uid = last_uid
     try:
         client.login(username, password)
-        logger.info("Authenticated to Gmail IMAP; checking unread mailbox headers.")
+        logger.info("Authenticated to Gmail IMAP; checking mailbox.")
         status, _ = client.select(settings.IMAP_FOLDER)
         if status != "OK":
             raise RuntimeError(f"Unable to select IMAP folder {settings.IMAP_FOLDER!r}.")
-        logger.info("Selected Gmail IMAP folder; searching for replies to known recipients.")
+        
         candidate_uids = set()
         since_date = (
             datetime.now(timezone.utc) - timedelta(days=settings.IMAP_LOOKBACK_DAYS)
         ).strftime("%d-%b-%Y")
+
         for address, batch_number in _request_search_terms(sent_requests):
             status, data = client.uid(
                 "search",
                 None,
-                "UNSEEN",
                 "FROM",
                 address,
                 "SUBJECT",
@@ -343,25 +350,34 @@ def poll_inbox_once() -> int:
                 since_date,
             )
             if status != "OK":
-                raise RuntimeError("Unable to search Gmail for unread supplier replies.")
+                raise RuntimeError("Unable to search Gmail for supplier replies.")
             candidate_uids.update((data[0] or b"").split())
+
         logger.info(
-            "Gmail IMAP returned %s unread message(s) from configured request contacts.",
+            "Gmail IMAP found %s candidate message(s) to verify.",
             len(candidate_uids),
         )
 
         for message_uid in sorted(candidate_uids, key=int):
             uid = int(message_uid)
-            if uid <= last_uid:
+            if not force_rescan and uid <= last_uid:
                 continue
             status, fetched = client.uid("fetch", message_uid, "(BODY.PEEK[HEADER])")
             if status != "OK" or not fetched or not isinstance(fetched[0], tuple):
-                logger.warning("Could not fetch headers for unread IMAP UID %s", uid)
-                break
+                logger.warning("Could not fetch headers for IMAP UID %s", uid)
+                continue
             headers = message_from_bytes(fetched[0][1], policy=default)
             sender = parseaddr(str(headers.get("From", "")))[1].strip().casefold()
             subject = _decoded_header(headers.get("Subject"))
-            batch_id = _matching_batch_id(sender, subject, sent_requests) if sender and subject else None
+            
+            db = SessionLocal()
+            batch_id = None
+            try:
+                matched_batch = _find_batch_for_reply(db, sender, subject) if sender and subject else None
+                if matched_batch:
+                    batch_id = str(matched_batch.id)
+            finally:
+                db.close()
 
             stored_count = 0
             handled = False
@@ -371,19 +387,20 @@ def poll_inbox_once() -> int:
                 )
                 if status != "OK" or not full_message or not isinstance(full_message[0], tuple):
                     logger.warning("Could not fetch matched supplier reply UID %s", uid)
-                    break
+                    continue
                 db = SessionLocal()
                 try:
                     stored_count, handled = ingest_message(db, full_message[0][1], str(uid))
                 except Exception:
                     logger.exception("Failed processing inbound IMAP UID %s", uid)
-                    break
+                    continue
                 finally:
                     db.close()
                 if handled:
                     client.uid("store", message_uid, "+FLAGS", "\\Seen")
 
-            highest_scanned_uid = uid
+            if uid > highest_scanned_uid:
+                highest_scanned_uid = uid
             if stored_count:
                 total_documents += stored_count
 
@@ -393,7 +410,6 @@ def poll_inbox_once() -> int:
                 _save_checkpoint(checkpoint_db, mailbox_key, highest_scanned_uid)
             finally:
                 checkpoint_db.close()
-        if highest_scanned_uid > last_uid:
             logger.info(
                 "Gmail inbox poll scanned new UIDs through %s and stored %s PDF attachment(s).",
                 highest_scanned_uid,

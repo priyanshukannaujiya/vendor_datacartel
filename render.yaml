@@ -28,3 +28,9 @@ services:
         sync: false
       - key: RESEND_API_KEY
         sync: false
+      - key: IMAP_ENABLED
+        value: "true"
+      - key: IMAP_HOST
+        value: imap.gmail.com
+      - key: IMAP_PORT
+        value: "993"

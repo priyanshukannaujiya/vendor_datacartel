@@ -16,6 +16,7 @@ import {
   Building2,
   Package,
   X,
+  Mail,
 } from 'lucide-react';
 import { documentApi, batchApi, vendorApi } from '../api/client';
 import { DocumentRecord, Batch, Vendor } from '../types';
@@ -26,6 +27,7 @@ export const DocumentsPage: React.FC = () => {
   const [docTypeFilter, setDocTypeFilter] = useState('');
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [selectedDoc, setSelectedDoc] = useState<DocumentRecord | null>(null);
+  const [syncStatusMsg, setSyncStatusMsg] = useState<{ text: string; isError?: boolean } | null>(null);
 
   // Upload Form
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -46,6 +48,31 @@ export const DocumentsPage: React.FC = () => {
   const { data: vendors = [] } = useQuery<Vendor[]>({
     queryKey: ['vendors-list'],
     queryFn: () => vendorApi.getAll(),
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: () => documentApi.syncInbox(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['documents'] });
+      queryClient.invalidateQueries({ queryKey: ['batches'] });
+      if (data.new_documents_count > 0) {
+        setSyncStatusMsg({
+          text: `Inbox checked! Imported ${data.new_documents_count} new document attachment(s) from vendor email replies.`,
+        });
+      } else {
+        setSyncStatusMsg({
+          text: data.message || 'Mailbox checked. All vendor document replies are up to date.',
+        });
+      }
+      setTimeout(() => setSyncStatusMsg(null), 8000);
+    },
+    onError: (err: any) => {
+      setSyncStatusMsg({
+        text: `Mailbox check failed: ${err?.response?.data?.message || err.message}`,
+        isError: true,
+      });
+      setTimeout(() => setSyncStatusMsg(null), 8000);
+    },
   });
 
   const uploadMutation = useMutation({
@@ -125,9 +152,14 @@ export const DocumentsPage: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={() => refetch()} className="btn-secondary">
-            <RefreshCw className="w-4 h-4 mr-1.5" />
-            <span>Sync</span>
+          <button
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+            className="btn-secondary"
+            title="Poll Gmail inbox for supplier email replies with PDF attachments"
+          >
+            <RefreshCw className={`w-4 h-4 mr-1.5 ${syncMutation.isPending ? 'animate-spin text-teal-600' : ''}`} />
+            <span>{syncMutation.isPending ? 'Checking Emails...' : 'Sync Vendor Emails'}</span>
           </button>
           <button onClick={() => setIsUploadModalOpen(true)} className="btn-primary">
             <UploadCloud className="w-4 h-4 mr-1.5" />
@@ -135,6 +167,28 @@ export const DocumentsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Sync Status Banner */}
+      {syncStatusMsg && (
+        <div
+          className={`p-4 rounded-xl border flex items-center justify-between transition-all shadow-sm ${
+            syncStatusMsg.isError
+              ? 'bg-rose-50 border-rose-200 text-rose-900'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+          }`}
+        >
+          <div className="flex items-center gap-3">
+            <Mail className={`w-5 h-5 shrink-0 ${syncStatusMsg.isError ? 'text-rose-600' : 'text-emerald-600'}`} />
+            <span className="text-sm font-medium">{syncStatusMsg.text}</span>
+          </div>
+          <button
+            onClick={() => setSyncStatusMsg(null)}
+            className="text-slate-400 hover:text-slate-600 p-1"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Search and Filters */}
       <div className="v-card p-4 flex flex-col md:flex-row items-center gap-4">

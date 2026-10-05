@@ -512,6 +512,11 @@ export const documentApi = {
   delete: async (id: string): Promise<void> => {
     await apiClient.delete(`/api/documents/${id}`);
   },
+
+  syncInbox: async (): Promise<{ success: boolean; new_documents_count: number; message: string }> => {
+    const response = await apiClient.post('/api/documents/sync-inbox');
+    return response.data;
+  },
 };
 
 // ==================== PREDICTION APIS ====================

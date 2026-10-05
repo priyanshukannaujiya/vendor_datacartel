@@ -1,6 +1,7 @@
 """
 Documents router for listing, retrieving, downloading, and managing supplier/batch documents in VendorIQ.
 """
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,8 @@ from app.models.batch import Batch
 from app.models.vendor import Vendor
 from app.models.company import Company
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -94,6 +97,32 @@ def list_documents(
         "page": page,
         "page_size": page_size,
     }
+
+
+@router.post("/sync-inbox")
+def sync_documents_inbox(
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
+    """
+    Poll the configured Gmail mailbox over IMAP for vendor PDF replies
+    and ingest them immediately into the database and document processing pipeline.
+    """
+    try:
+        from app.services.inbound_email_service import poll_inbox_once
+        count = poll_inbox_once(force_rescan=True)
+        return {
+            "success": True,
+            "new_documents_count": count,
+            "message": f"Inbox sync completed. Imported {count} new document(s) from vendor emails.",
+        }
+    except Exception as exc:
+        logger.exception("Inbox sync error: %s", exc)
+        return {
+            "success": False,
+            "new_documents_count": 0,
+            "message": f"Inbox sync error: {str(exc)}",
+        }
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -249,10 +278,25 @@ def download_document(
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise NotFoundError(f"Document with ID '{document_id}' not found")
-    if not os.path.exists(doc.file_path):
-        raise NotFoundError("Document file not found on server storage")
+    
+    target_path = doc.file_path
+    if not os.path.exists(target_path):
+        normalized = target_path.replace("\\", "/")
+        if os.path.exists(normalized):
+            target_path = normalized
+        else:
+            base_filename = os.path.basename(doc.file_path)
+            cand1 = os.path.join(settings.UPLOAD_DIR, base_filename)
+            cand2 = os.path.join(settings.UPLOAD_DIR, "documents", base_filename)
+            if os.path.exists(cand1):
+                target_path = cand1
+            elif os.path.exists(cand2):
+                target_path = cand2
+            else:
+                raise NotFoundError(f"Document file '{doc.file_name}' not found on storage")
+
     return FileResponse(
-        path=doc.file_path,
+        path=target_path,
         filename=doc.file_name,
         media_type=doc.mime_type or "application/pdf",
     )
