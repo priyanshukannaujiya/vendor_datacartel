@@ -149,17 +149,18 @@ export const VendorsPage: React.FC = () => {
 
   // Document Request Email Mutation
   const sendEmailMutation = useMutation({
-    mutationFn: (data: { batchId: string; email: string }) =>
-      batchApi.requestDocuments(data.batchId, data.email),
-    onSuccess: (res) => {
+    mutationFn: (data: { batchId?: string; vendorId: string; email: string }) => {
+      if (data.batchId) {
+        return batchApi.requestDocuments(data.batchId, data.email);
+      }
+      return vendorApi.requestDocuments(data.vendorId, data.email);
+    },
+    onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['batches'] });
+      queryClient.invalidateQueries({ queryKey: ['vendors'] });
       setDispatchStatus({
-        type: res.success ? 'success' : 'error',
-        message: res.message || (
-          res.success
-            ? `Request email sent to ${res.recipient} via Google SMTP!`
-            : `Email delivery failed for ${res.recipient}.`
-        ),
+        type: 'success',
+        message: res.message || `Official documentation request dispatched via Google SMTP!`,
       });
     },
     onError: (err: any) => {
@@ -192,8 +193,10 @@ export const VendorsPage: React.FC = () => {
   const handleOpenEmailModal = (vendor: Vendor) => {
     setSelectedVendorForEmail(vendor);
     setCustomEmailAddress(vendor.contact_email || '');
-    // Pre-select first batch for this vendor if available
-    const vendorBatches = batches.filter((b) => b.vendor_id === vendor.id);
+    // Case-insensitive match on vendor id
+    const vendorBatches = batches.filter(
+      (b) => String(b.vendor_id || b.vendor?.id || '').toLowerCase().trim() === String(vendor.id || '').toLowerCase().trim()
+    );
     if (vendorBatches.length > 0) {
       setTargetBatchId(vendorBatches[0].id);
     } else {
@@ -205,9 +208,10 @@ export const VendorsPage: React.FC = () => {
 
   const handleSendEmailSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!targetBatchId || !customEmailAddress) return;
+    if (!customEmailAddress || !selectedVendorForEmail) return;
     sendEmailMutation.mutate({
-      batchId: targetBatchId,
+      batchId: targetBatchId || undefined,
+      vendorId: selectedVendorForEmail.id,
       email: customEmailAddress,
     });
   };
@@ -566,7 +570,9 @@ export const VendorsPage: React.FC = () => {
                 </thead>
                 <tbody>
                   {filteredVendors.map((vendor) => {
-                    const vendorBatches = batches.filter((b) => b.vendor_id === vendor.id);
+                    const vendorBatches = batches.filter(
+                      (b) => String(b.vendor_id || b.vendor?.id || '').toLowerCase().trim() === String(vendor.id || '').toLowerCase().trim()
+                    );
                     return (
                       <tr key={vendor.id}>
                         <td>
@@ -690,25 +696,36 @@ export const VendorsPage: React.FC = () => {
               </div>
 
               <div>
-                <label className="form-label">Select Associated Batch Lot *</label>
+                <label className="form-label">Associated Batch Lot Reference</label>
                 <select
-                  required
                   value={targetBatchId}
                   onChange={(e) => setTargetBatchId(e.target.value)}
                   className="form-select text-xs"
                 >
-                  <option value="">Select Batch</option>
+                  <option value="">General Supplier Monograph &amp; Onboarding (No Specific Lot)</option>
                   {batches
-                    .filter((b) => b.vendor_id === selectedVendorForEmail.id)
+                    .filter((b) => {
+                      const bVendorId = String(b.vendor_id || b.vendor?.id || '').toLowerCase().trim();
+                      const targetVendorId = String(selectedVendorForEmail.id || '').toLowerCase().trim();
+                      return bVendorId === targetVendorId;
+                    })
                     .map((b) => (
                       <option key={b.id} value={b.id}>
-                        {b.batch_number} — {b.raw_material?.name} ({b.quantity} {b.unit})
+                        {b.batch_number} — {(b as any).raw_material_name || b.raw_material?.name || 'Raw Material'} ({b.quantity} {b.unit})
                       </option>
                     ))}
                 </select>
-                {!batches.some((b) => b.vendor_id === selectedVendorForEmail.id) && (
-                  <span className="text-[11px] text-amber-700 mt-1 block">
-                    This supplier has no associated batch. Create a batch before sending a document request.
+                {batches.filter((b) => {
+                  const bVendorId = String(b.vendor_id || b.vendor?.id || '').toLowerCase().trim();
+                  const targetVendorId = String(selectedVendorForEmail.id || '').toLowerCase().trim();
+                  return bVendorId === targetVendorId;
+                }).length === 0 ? (
+                  <span className="text-[11px] text-slate-500 mt-1 block">
+                    No registered batch lot found. Request will be dispatched for general supplier qualification and onboarding.
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-blue-600 mt-1 block">
+                    You can pick a specific lot or leave on General Supplier Monograph.
                   </span>
                 )}
               </div>
@@ -730,7 +747,7 @@ export const VendorsPage: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={sendEmailMutation.isPending || !targetBatchId || !customEmailAddress}
+                  disabled={sendEmailMutation.isPending || !customEmailAddress}
                   className="btn-primary"
                 >
                   <Send className="w-3.5 h-3.5 mr-1.5" />

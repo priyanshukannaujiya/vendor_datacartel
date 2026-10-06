@@ -359,6 +359,37 @@ export const vendorApi = {
     await apiClient.delete(`/api/vendors/${id}`);
   },
 
+  getPortalSession: async (token?: string): Promise<{
+    vendor?: Vendor;
+    available_vendors: Array<{ id: string; name: string; vendor_code: string; contact_email: string }>;
+    batches: Batch[];
+    documents: DocumentRecord[];
+  }> => {
+    const response = await apiClient.get('/api/vendors/portal-session', {
+      params: token ? { token } : {},
+    });
+    const data = response.data;
+    return {
+      vendor: data.vendor ? normalizeVendor(data.vendor) : undefined,
+      available_vendors: data.available_vendors || [],
+      batches: (data.batches || []).map(normalizeBatch),
+      documents: (data.documents || []).map(normalizeDocument),
+    };
+  },
+
+  requestDocuments: async (
+    vendorId: string,
+    customEmail?: string,
+    batchId?: string
+  ): Promise<{ message: string; recipient: string; batch_number: string; email_status: string }> => {
+    const response = await apiClient.post(
+      `/api/vendors/${vendorId}/request-documents`,
+      customEmail ? { custom_email: customEmail } : {},
+      { params: batchId ? { batch_id: batchId } : {} }
+    );
+    return response.data;
+  },
+
   getHistory: async (id: string): Promise<any> => {
     const response = await apiClient.get(`/api/vendors/${id}/history`);
     return response.data;

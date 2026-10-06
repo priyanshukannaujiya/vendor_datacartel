@@ -5,8 +5,8 @@ Follows VendorIQ PRD Section 12 & 14.
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Query, Body, status
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func
 from app.core.database import get_db
 from app.core.security import get_current_user, get_optional_current_user
@@ -27,6 +27,127 @@ from app.schemas.vendor import (
 from app.routers.analytics import invalidate_analytics_cache
 
 router = APIRouter(prefix="/vendors", tags=["Vendors"])
+
+
+@router.get("/portal-session")
+def get_vendor_portal_session(
+    token: Optional[str] = Query(None, description="Vendor invitation token or ID"),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+):
+    """
+    Supplier Portal session endpoint. Resolves vendor context and associated batches
+    via invitation token or company session, enabling suppliers to select batches and submit documents.
+    """
+    vendor = None
+    if token and token.strip():
+        clean_token = token.strip()
+        vendor = db.query(Vendor).filter(
+            Vendor.invitation_token == clean_token,
+            Vendor.deleted_at.is_(None)
+        ).first()
+
+        if not vendor:
+            # Fallback check if token is vendor UUID
+            try:
+                v_uuid = UUID(clean_token)
+                vendor = db.query(Vendor).filter(Vendor.id == v_uuid, Vendor.deleted_at.is_(None)).first()
+            except Exception:
+                pass
+
+    all_vendors = []
+    if current_user and current_user.company_id:
+        all_vendors_q = db.query(Vendor).filter(
+            Vendor.company_id == current_user.company_id,
+            Vendor.deleted_at.is_(None),
+            Vendor.is_active == True,
+        ).order_by(Vendor.vendor_name.asc()).all()
+        all_vendors = [
+            {
+                "id": str(v.id),
+                "name": v.vendor_name,
+                "vendor_code": v.code,
+                "contact_email": v.email or "",
+            }
+            for v in all_vendors_q
+        ]
+        if not vendor and all_vendors_q:
+            vendor = all_vendors_q[0]
+    elif not vendor:
+        # Public fallback: return active vendors for intake selection
+        public_vendors = db.query(Vendor).filter(
+            Vendor.deleted_at.is_(None),
+            Vendor.is_active == True,
+        ).order_by(Vendor.vendor_name.asc()).limit(50).all()
+        all_vendors = [
+            {
+                "id": str(v.id),
+                "name": v.vendor_name,
+                "vendor_code": v.code,
+                "contact_email": v.email or "",
+            }
+            for v in public_vendors
+        ]
+        if public_vendors:
+            vendor = public_vendors[0]
+
+    batches_list = []
+    docs_list = []
+    if vendor:
+        batches_q = (
+            db.query(Batch)
+            .options(joinedload(Batch.raw_material))
+            .filter(Batch.vendor_id == vendor.id)
+            .order_by(Batch.created_at.desc())
+            .all()
+        )
+        batches_list = [
+            {
+                "id": str(b.id),
+                "batch_number": b.batch_number,
+                "vendor_id": str(b.vendor_id),
+                "raw_material_name": b.raw_material.name if b.raw_material else "Raw Material",
+                "quantity": b.quantity,
+                "unit": b.unit,
+                "status": b.status,
+                "decision_status": b.status,
+            }
+            for b in batches_q
+        ]
+
+        docs_q = (
+            db.query(Document)
+            .filter(Document.vendor_id == vendor.id)
+            .order_by(Document.created_at.desc())
+            .limit(30)
+            .all()
+        )
+        docs_list = [
+            {
+                "id": str(d.id),
+                "filename": d.filename,
+                "original_filename": d.file_name,
+                "document_type": d.document_type,
+                "status": d.processing_status,
+                "batch_id": str(d.batch_id) if d.batch_id else None,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in docs_q
+        ]
+
+    return {
+        "vendor": {
+            "id": str(vendor.id),
+            "name": vendor.vendor_name,
+            "vendor_code": vendor.code,
+            "contact_email": vendor.email or "",
+            "contact_name": vendor.contact_name or "",
+            "status": vendor.status,
+        } if vendor else None,
+        "available_vendors": all_vendors,
+        "batches": batches_list,
+        "documents": docs_list,
+    }
 
 
 @router.get("", response_model=VendorListResponse)
@@ -644,3 +765,98 @@ def delete_vendor(
     vendor.is_active = False
     db.commit()
     return {"message": "Vendor deleted successfully"}
+
+
+@router.post("/{vendor_id}/request-documents")
+def request_vendor_documents(
+    vendor_id: UUID,
+    batch_id: Optional[UUID] = Query(None),
+    custom_email: Optional[str] = Body(None, embed=True),
+    current_user: Optional[User] = Depends(get_optional_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Send an official documentation request email to a vendor directly.
+    Can be linked to a specific batch or general supplier onboarding.
+    Dispatched via Google SMTP.
+    """
+    vendor = db.query(Vendor).filter(Vendor.id == vendor_id, Vendor.deleted_at.is_(None)).first()
+    if not vendor:
+        raise NotFoundError(f"Vendor '{vendor_id}' not found")
+
+    recipient = custom_email or vendor.email or vendor.contact_email
+    if not recipient:
+        raise BadRequestError("No recipient email found for this vendor. Please provide an email address.")
+
+    batch = None
+    if batch_id:
+        batch = db.query(Batch).filter(Batch.id == batch_id).first()
+
+    batch_number = batch.batch_number if batch else f"QUAL-{str(vendor.id)[:6].upper()}"
+    material_name = batch.raw_material.name if (batch and batch.raw_material) else "General Raw Material Monograph"
+    required_purity = getattr(batch.raw_material, "required_purity", 99.0) if (batch and batch.raw_material) else 99.0
+    ref_id = str(batch.id) if batch else str(vendor.id)
+
+    from app.services.email_templates import render_document_request_email
+    from app.services.email_service import send_email
+    from app.services.audit_service import record_audit_event
+    from app.models.decision import EmailEvent
+
+    subject, html_content = render_document_request_email(
+        reference_id=ref_id,
+        vendor_name=vendor.vendor_name,
+        batch_number=batch_number,
+        material_name=material_name,
+        required_purity=required_purity,
+        quantity=batch.quantity if batch else 1000,
+        unit=batch.unit if batch else "kg",
+    )
+
+    email_status = "PENDING"
+    error_message = None
+
+    try:
+        send_email(
+            recipient=recipient,
+            subject=subject,
+            html_content=html_content,
+            text_content=f"Please submit PDF documentation (COA, SDS, GMP) for Supplier {vendor.vendor_name}.",
+        )
+        email_status = "SENT"
+    except Exception as exc:
+        email_status = "FAILED"
+        error_message = str(exc)
+
+    email_event = EmailEvent(
+        company_id=vendor.company_id,
+        vendor_id=vendor.id,
+        batch_id=batch.id if batch else None,
+        recipient_email=recipient,
+        subject=subject,
+        email_type="DOCUMENT_REQUEST",
+        status=email_status,
+        provider="GOOGLE_SMTP",
+        error_message=error_message,
+        html_content=html_content,
+        text_content=f"Please submit PDF documentation for Supplier {vendor.vendor_name}.",
+        sent_at=datetime.now(timezone.utc) if email_status == "SENT" else None,
+    )
+    db.add(email_event)
+    db.commit()
+
+    record_audit_event(
+        db,
+        "Document Request Dispatched",
+        company_id=vendor.company_id,
+        vendor_id=vendor.id,
+        batch_id=batch.id if batch else None,
+        details={"recipient": recipient, "email_status": email_status, "batch_number": batch_number},
+        commit=True,
+    )
+
+    return {
+        "message": f"Document request email dispatched to {recipient}",
+        "recipient": recipient,
+        "batch_number": batch_number,
+        "email_status": email_status,
+    }

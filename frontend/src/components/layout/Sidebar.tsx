@@ -25,7 +25,7 @@ const routePreloaders: Record<string, () => Promise<any>> = {
   '/documents': () => import('../../pages/DocumentsPage'),
   '/predictions': () => import('../../pages/PredictionsPage'),
   '/analytics': () => import('../../pages/AnalyticsPage'),
-  '/machine-intelligence': () => import('../../pages/MachineIntelligencePage'),
+  '/vendor-portal': () => import('../../pages/VendorPortalPage'),
   '/settings': () => import('../../pages/SettingsPage'),
 };
 
@@ -45,10 +45,10 @@ export const Sidebar: React.FC = () => {
     { label: 'Risk Predictions', path: '/predictions', icon: ShieldAlert },
     { label: 'Analytics', path: '/analytics', icon: BarChart3 },
     {
-      label: 'Machine Intelligence',
-      path: '/machine-intelligence',
-      icon: Cpu,
-      badge: 'ML Engine',
+      label: 'Supplier Portal',
+      path: '/vendor-portal',
+      icon: UserCheck,
+      badge: 'Portal',
     },
     { label: 'Settings', path: '/settings', icon: Settings },
   ];
