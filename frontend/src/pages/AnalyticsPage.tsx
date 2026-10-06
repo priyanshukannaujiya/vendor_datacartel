@@ -26,8 +26,9 @@ import { DashboardAnalytics } from '../types';
 
 export const AnalyticsPage: React.FC = () => {
   const { data: analytics, isLoading, refetch } = useQuery<DashboardAnalytics>({
-    queryKey: ['analytics-full'],
+    queryKey: ['dashboard-analytics'],
     queryFn: () => analyticsApi.getDashboardAnalytics(),
+    staleTime: 60000,
   });
 
   if (isLoading || !analytics) {

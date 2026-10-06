@@ -3,7 +3,7 @@ BatchIntelligence model storing AI/ML validation outputs, historical metrics,
 RandomForest risk predictions, and Kimi K3 technical reasoning synthesis.
 """
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, func
+from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Index, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -41,3 +41,7 @@ class BatchIntelligence(Base):
     )
 
     batch = relationship("Batch", back_populates="intelligence")
+
+    __table_args__ = (
+        Index("ix_batch_intelligence_created_at", "created_at"),
+    )

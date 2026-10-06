@@ -55,9 +55,10 @@ export const BatchesPage: React.FC = () => {
   });
 
   const { data: vendors = [] } = useQuery<Vendor[]>({
-    queryKey: ['vendors-list'],
+    queryKey: ['vendors'],
     queryFn: () => vendorApi.getAll(),
-    staleTime: 30000,
+    enabled: isAddModalOpen,
+    staleTime: 60000,
   });
 
   const createBatchMutation = useMutation({

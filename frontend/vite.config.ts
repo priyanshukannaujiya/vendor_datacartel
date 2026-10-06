@@ -11,12 +11,16 @@ export default defineConfig({
   build: {
     target: 'es2020',
     cssCodeSplit: true,
-    chunkSizeWarningLimit: 700,
+    cssMinify: true,
+    minify: 'esbuild',
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks: {
           'vendor-charts': ['recharts'],
           'vendor-icons': ['lucide-react'],
+          'vendor-query': ['@tanstack/react-query', 'axios'],
+          'vendor-router': ['react-router-dom'],
         },
       },
     },

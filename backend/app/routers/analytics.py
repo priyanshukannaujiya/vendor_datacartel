@@ -20,9 +20,9 @@ from app.models.decision import EmailEvent
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
-# High-performance per-company in-memory cache (15-second TTL)
+# High-performance per-company in-memory cache (45-second TTL with active invalidation)
 _ANALYTICS_CACHE: Dict[str, Dict[str, Any]] = {}
-_CACHE_TTL_SECONDS = 15.0
+_CACHE_TTL_SECONDS = 45.0
 
 
 def invalidate_analytics_cache(company_id: Optional[Any] = None):
@@ -152,7 +152,11 @@ def get_dashboard_analytics(
     intelligence_by_batch = {}
     if batch_ids_for_intel:
         intels = (
-            db.query(BatchIntelligence)
+            db.query(
+                BatchIntelligence.batch_id,
+                BatchIntelligence.ml_prediction,
+                BatchIntelligence.validation_result,
+            )
             .filter(BatchIntelligence.batch_id.in_(batch_ids_for_intel))
             .all()
         )
@@ -216,7 +220,7 @@ def get_dashboard_analytics(
     recent_emails = {}
     if recent_batch_ids:
         emails = (
-            db.query(EmailEvent)
+            db.query(EmailEvent.batch_id, EmailEvent.status)
             .filter(EmailEvent.batch_id.in_(recent_batch_ids))
             .order_by(desc(EmailEvent.created_at))
             .all()

@@ -94,4 +94,6 @@ class Document(Base):
         Index("ix_documents_company_batch", "company_id", "batch_id"),
         Index("ix_documents_company_type", "company_id", "document_type"),
         Index("ix_documents_processing_status", "company_id", "processing_status"),
+        Index("ix_documents_created_at", "created_at"),
+        Index("ix_documents_company_created", "company_id", "created_at"),
     )

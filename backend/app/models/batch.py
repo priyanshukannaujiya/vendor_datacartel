@@ -101,4 +101,7 @@ class Batch(Base):
             name="uq_batches_company_vendor_batch_number",
         ),
         Index("ix_batches_company_id_status", "company_id", "status"),
+        Index("ix_batches_created_at", "created_at"),
+        Index("ix_batches_company_created_at", "company_id", "created_at"),
+        Index("ix_batches_status", "status"),
     )

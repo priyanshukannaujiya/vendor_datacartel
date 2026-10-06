@@ -38,7 +38,7 @@ def get_engine():
 
         engine = create_engine(db_url, **engine_kwargs)
 
-        # Performance tuning for SQLite: WAL mode, synchronous=NORMAL, 64MB cache
+        # Performance tuning for SQLite: WAL mode, synchronous=NORMAL, 64MB cache, memory temp_store, 256MB mmap
         if db_url.startswith("sqlite"):
             @event.listens_for(engine, "connect")
             def set_sqlite_pragma(dbapi_connection, connection_record):
@@ -47,6 +47,8 @@ def get_engine():
                     cursor.execute("PRAGMA journal_mode=WAL")
                     cursor.execute("PRAGMA synchronous=NORMAL")
                     cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
+                    cursor.execute("PRAGMA temp_store=MEMORY")
+                    cursor.execute("PRAGMA mmap_size=268435456")  # 256MB memory map
                     cursor.execute("PRAGMA foreign_keys=ON")
                 except Exception:
                     pass

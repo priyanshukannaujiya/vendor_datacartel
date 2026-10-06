@@ -45,7 +45,8 @@ export const DashboardPage: React.FC = () => {
   } = useQuery<DashboardAnalytics>({
     queryKey: ['dashboard-analytics'],
     queryFn: () => analyticsApi.getDashboardAnalytics(),
-    refetchInterval: 15000,
+    staleTime: 60000,
+    refetchInterval: 60000,
   });
 
   const getRiskBadge = (level?: string) => {

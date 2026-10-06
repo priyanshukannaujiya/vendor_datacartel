@@ -75,11 +75,13 @@ export const VendorsPage: React.FC = () => {
   } = useQuery<Vendor[]>({
     queryKey: ['vendors', riskFilter, statusFilter],
     queryFn: () => vendorApi.getAll({ risk_level: riskFilter || undefined, status: statusFilter || undefined }),
+    staleTime: 30000,
   });
 
   const { data: batches = [] } = useQuery<Batch[]>({
-    queryKey: ['all-batches'],
+    queryKey: ['batches'],
     queryFn: () => batchApi.getAll(),
+    staleTime: 60000,
   });
 
   const createVendorMutation = useMutation({

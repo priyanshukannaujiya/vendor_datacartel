@@ -64,7 +64,10 @@ def list_predictions(
                 val_res = val_svc.validate_batch(b, material, vendor, proc_docs)
                 v_hist = hist_svc.analyze_vendor_history(db, b.vendor_id, b)
                 pred_res, feat = pred_svc.predict_risk(b, material, vendor, val_res, v_hist, b.purity_reported)
-                kimi_res = kimi_svc.generate_explanation(vendor, material, b, val_res, v_hist, pred_res)
+                from app.schemas.kimi import KimiStatus
+                kimi_res = kimi_svc._generate_fallback_explanation(
+                    vendor, material, b, val_res, v_hist, pred_res, status=KimiStatus.FALLBACK, error_message="Local deterministic synthesis"
+                )
 
                 intel = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id == b.id).first()
                 if not intel:

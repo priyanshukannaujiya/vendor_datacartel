@@ -38,16 +38,21 @@ export const DocumentsPage: React.FC = () => {
   const { data: documents = [], isLoading, refetch } = useQuery<DocumentRecord[]>({
     queryKey: ['documents'],
     queryFn: () => documentApi.getAll(),
+    staleTime: 30000,
   });
 
   const { data: batches = [] } = useQuery<Batch[]>({
-    queryKey: ['batches-list'],
+    queryKey: ['batches'],
     queryFn: () => batchApi.getAll(),
+    enabled: isUploadModalOpen,
+    staleTime: 60000,
   });
 
   const { data: vendors = [] } = useQuery<Vendor[]>({
-    queryKey: ['vendors-list'],
+    queryKey: ['vendors'],
     queryFn: () => vendorApi.getAll(),
+    enabled: isUploadModalOpen,
+    staleTime: 60000,
   });
 
   const syncMutation = useMutation({

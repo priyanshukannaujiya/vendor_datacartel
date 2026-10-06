@@ -51,6 +51,7 @@ from app.services.decision_service import evaluate_decision
 from app.services.email_service import EmailDeliveryError, send_email
 from app.services.email_templates import render_decision_email, render_document_request_email
 from app.services.audit_service import record_audit_event
+from app.routers.analytics import invalidate_analytics_cache
 
 logger = logging.getLogger(__name__)
 
@@ -154,11 +155,19 @@ def list_batches(
     intel_map = {}
     email_map = {}
     if batch_ids:
-        intels = db.query(BatchIntelligence).filter(BatchIntelligence.batch_id.in_(batch_ids)).all()
+        intels = (
+            db.query(
+                BatchIntelligence.batch_id,
+                BatchIntelligence.ml_prediction,
+                BatchIntelligence.validation_result,
+            )
+            .filter(BatchIntelligence.batch_id.in_(batch_ids))
+            .all()
+        )
         intel_map = {bi.batch_id: bi for bi in intels}
 
         emails = (
-            db.query(EmailEvent)
+            db.query(EmailEvent.batch_id, EmailEvent.status)
             .filter(EmailEvent.batch_id.in_(batch_ids))
             .order_by(desc(EmailEvent.created_at))
             .all()
@@ -268,6 +277,8 @@ def create_batch(
         batch_id=batch.id,
         details={"batch_number": batch.batch_number},
     )
+
+    invalidate_analytics_cache(batch.company_id)
 
     return _enrich_batch_response(batch, db)
 

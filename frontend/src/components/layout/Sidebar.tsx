@@ -18,9 +18,24 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
+const routePreloaders: Record<string, () => Promise<any>> = {
+  '/dashboard': () => import('../../pages/DashboardPage'),
+  '/vendors': () => import('../../pages/VendorsPage'),
+  '/batches': () => import('../../pages/BatchesPage'),
+  '/documents': () => import('../../pages/DocumentsPage'),
+  '/predictions': () => import('../../pages/PredictionsPage'),
+  '/analytics': () => import('../../pages/AnalyticsPage'),
+  '/machine-intelligence': () => import('../../pages/MachineIntelligencePage'),
+  '/settings': () => import('../../pages/SettingsPage'),
+};
+
 export const Sidebar: React.FC = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+
+  const handlePreload = (path: string) => {
+    routePreloaders[path]?.();
+  };
 
   const navItems = [
     { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
@@ -69,6 +84,8 @@ export const Sidebar: React.FC = () => {
             <NavLink
               key={item.path}
               to={item.path}
+              onMouseEnter={() => handlePreload(item.path)}
+              onFocus={() => handlePreload(item.path)}
               className={({ isActive }) =>
                 `flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-semibold transition-all duration-150 group ${
                   isActive

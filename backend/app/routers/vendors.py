@@ -24,6 +24,7 @@ from app.schemas.vendor import (
     VendorDetailResponse,
     VendorListResponse,
 )
+from app.routers.analytics import invalidate_analytics_cache
 
 router = APIRouter(prefix="/vendors", tags=["Vendors"])
 
@@ -207,6 +208,8 @@ def create_vendor(
             )
         except Exception:
             pass
+
+    invalidate_analytics_cache(current_user.company_id)
 
     resp = VendorResponse.model_validate(vendor)
     resp.name = vendor.vendor_name

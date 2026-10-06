@@ -3,7 +3,7 @@ Decision, EmailEvent, and AuditEvent models for VendorIQ.
 Follows Developer 3 specifications, unified with Neon PostgreSQL UUID schema.
 """
 import uuid
-from sqlalchemy import Column, String, Float, Text, DateTime, ForeignKey, JSON, func
+from sqlalchemy import Column, String, Float, Text, DateTime, ForeignKey, JSON, Index, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from app.core.database import Base
@@ -87,6 +87,10 @@ class EmailEvent(Base):
     # Relationships
     batch = relationship("Batch", back_populates="email_events")
     decision = relationship("BatchDecision", back_populates="email_events")
+
+    __table_args__ = (
+        Index("ix_email_events_batch_created", "batch_id", "created_at"),
+    )
 
 
 class AuditEvent(Base):

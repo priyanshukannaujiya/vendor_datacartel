@@ -89,6 +89,8 @@ class Vendor(Base):
 
     __table_args__ = (
         Index("ix_vendors_company_id_is_active", "company_id", "is_active"),
+        Index("ix_vendors_company_deleted", "company_id", "deleted_at"),
+        Index("ix_vendors_risk_score", "risk_score"),
         Index(
             "uq_vendors_company_name_not_deleted",
             "company_id",
